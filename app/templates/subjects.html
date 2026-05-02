@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mb-5">
+  <h2 class="text-2xl font-bold tracking-tight">Subjects &amp; curriculum</h2>
+  <p class="text-sm text-slate-500 mt-1">
+    Click a subject to view its full curriculum, mark topics as studied, add notes and attachments.
+  </p>
+</div>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for r in subject_rows %}
+    {% set s = r.subject %}
+    <a href="/subjects/{{ s.id }}"
+       class="group block bg-white rounded-2xl shadow-sm hover:shadow-md transition overflow-hidden border-t-4"
+       style="border-color: {{ s.color }}">
+      <div class="p-5">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="inline-flex items-center justify-center w-14 h-14 rounded-xl text-3xl shrink-0
+                       group-hover:scale-105 transition"
+                style="background: {{ s.color }}20">
+            {{ s.icon or '📚' }}
+          </span>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold text-slate-800 truncate">{{ s.name }}</div>
+            <div class="text-[11px] uppercase tracking-wide text-slate-400">{{ s.level }}</div>
+          </div>
+          {% if r.due_now %}
+            <span class="pill bg-rose-50 text-rose-700">{{ r.due_now }} due</span>
+          {% endif %}
+        </div>
+
+        <div class="text-xs text-slate-600 mb-2 flex items-center justify-between">
+          <span>{{ r.studied }} / {{ r.total }} topics in revision</span>
+          <span class="font-semibold text-slate-700">{{ r.coverage }}%</span>
+        </div>
+        <div class="h-1.5 w-full bg-slate-100 rounded">
+          <div class="h-1.5 rounded" style="width: {{ r.coverage }}%; background: {{ s.color }}"></div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between text-xs">
+          <span class="text-slate-400">{{ r.total }} unit{% if r.total != 1 %}s{% endif %}</span>
+          <span class="text-indigo-600 group-hover:translate-x-1 transition">View curriculum →</span>
+        </div>
+      </div>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

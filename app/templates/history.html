@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <h2 class="text-xl font-semibold">History · {{ label }}</h2>
+
+    <div class="flex items-center gap-2 text-sm">
+      <a href="/history?view=day&on={{ on_date.isoformat() }}"
+         class="px-2 py-1 rounded border {% if view == 'day' %}bg-indigo-600 text-white border-indigo-600{% endif %}">Day</a>
+      <a href="/history?view=week&on={{ on_date.isoformat() }}"
+         class="px-2 py-1 rounded border {% if view == 'week' %}bg-indigo-600 text-white border-indigo-600{% endif %}">Week</a>
+      <span class="mx-2 text-slate-300">|</span>
+      <a class="px-2 py-1 border rounded" href="/history?view={{ view }}&on={{ prev_d.isoformat() }}">←</a>
+      <a class="px-2 py-1 border rounded" href="/history?view={{ view }}">Today</a>
+      <a class="px-2 py-1 border rounded" href="/history?view={{ view }}&on={{ next_d.isoformat() }}">→</a>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 text-sm">
+    <div class="border rounded p-3">
+      <div class="text-xs text-slate-500">Total time</div>
+      <div class="text-lg font-semibold">{{ total_minutes }} min</div>
+    </div>
+    <div class="border rounded p-3">
+      <div class="text-xs text-slate-500">Sessions</div>
+      <div class="text-lg font-semibold">{{ total_count }}</div>
+    </div>
+    <div class="border rounded p-3 col-span-2 md:col-span-2">
+      <div class="text-xs text-slate-500">Range</div>
+      <div class="text-sm">{{ start_d.strftime("%a %d %b") }} – {{ end_d.strftime("%a %d %b %Y") }}</div>
+    </div>
+  </div>
+
+  <table class="w-full text-sm border">
+    <thead class="bg-slate-50 text-slate-600">
+      <tr>
+        <th class="text-left px-3 py-2">Day</th>
+        <th class="text-left px-3 py-2">Sessions</th>
+        <th class="text-left px-3 py-2">Minutes</th>
+        <th class="text-left px-3 py-2">Ratings</th>
+        <th class="text-left px-3 py-2"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in day_stats %}
+        <tr class="border-t {% if d.date == today %}bg-indigo-50/40{% endif %}">
+          <td class="px-3 py-2">
+            <div class="font-medium">{{ d.weekday }}</div>
+            <div class="text-xs text-slate-500">{{ d.date.strftime("%d %b") }}</div>
+          </td>
+          <td class="px-3 py-2">{{ d.count }}</td>
+          <td class="px-3 py-2">{{ d.minutes }} min</td>
+          <td class="px-3 py-2 text-xs">
+            {% if d.ratings.again %}<span class="pill bg-rose-100 text-rose-700 mr-1">Again {{ d.ratings.again }}</span>{% endif %}
+            {% if d.ratings.hard %}<span class="pill bg-amber-100 text-amber-700 mr-1">Hard {{ d.ratings.hard }}</span>{% endif %}
+            {% if d.ratings.good %}<span class="pill bg-emerald-100 text-emerald-700 mr-1">Good {{ d.ratings.good }}</span>{% endif %}
+            {% if d.ratings.easy %}<span class="pill bg-sky-100 text-sky-700 mr-1">Easy {{ d.ratings.easy }}</span>{% endif %}
+          </td>
+          <td class="px-3 py-2 text-right">
+            {% if d.count %}
+              <a class="text-indigo-600 text-xs" href="/history?view=day&on={{ d.date.isoformat() }}">details</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% if view == 'day' and d.sessions %}
+          <tr class="border-t bg-slate-50">
+            <td colspan="5" class="px-3 py-2">
+              <ul class="space-y-1">
+                {% for s in d.sessions %}
+                  <li class="flex items-center gap-3 text-xs">
+                    <span class="text-slate-500 w-12">{{ s.started_at.strftime("%H:%M") }}</span>
+                    <span class="flex-1">
+                      {% if s.topic %}
+                        {% if s.topic.code %}<span class="text-slate-400">{{ s.topic.code }}</span> {% endif %}
+                        {{ s.topic.title }}
+                        {% if s.topic.subject %}<span class="text-slate-400">· {{ s.topic.subject.name }}</span>{% endif %}
+                      {% else %}
+                        <span class="text-slate-400">(deleted topic)</span>
+                      {% endif %}
+                    </span>
+                    <span>{{ s.minutes }}m</span>
+                    {% if s.rating %}
+                      <span class="pill
+                        {% if s.rating == 'again' %}bg-rose-100 text-rose-700
+                        {% elif s.rating == 'hard' %}bg-amber-100 text-amber-700
+                        {% elif s.rating == 'good' %}bg-emerald-100 text-emerald-700
+                        {% else %}bg-sky-100 text-sky-700{% endif %}">{{ s.rating }}</span>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            </td>
+          </tr>
+        {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if total_count == 0 %}
+    <div class="text-xs text-slate-500 mt-4">
+      No sessions recorded in this range. Sessions are logged automatically when you tap
+      <em>Again / Hard / Good / Easy</em> on a topic.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

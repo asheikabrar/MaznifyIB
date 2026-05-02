@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block content %}
+{% set total_rated = rating_counts.again + rating_counts.hard + rating_counts.good + rating_counts.easy %}
+
+<!-- ===== Hero / KPI strip ===== -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-gradient-to-br from-indigo-500 to-indigo-700 text-white rounded-2xl p-4 shadow-sm">
+    <div class="text-[11px] uppercase tracking-wider opacity-90">Today's plan</div>
+    <div class="text-3xl font-bold mt-1">{{ today_plan.total_planned_minutes }}m</div>
+    <div class="text-xs opacity-90">of {{ today_plan.total_available_minutes }}m available</div>
+  </div>
+  <div class="bg-gradient-to-br from-emerald-500 to-emerald-700 text-white rounded-2xl p-4 shadow-sm">
+    <div class="text-[11px] uppercase tracking-wider opacity-90">This week</div>
+    <div class="text-3xl font-bold mt-1">{{ week_minutes }}m</div>
+    <div class="text-xs opacity-90">{{ week_count }} session{% if week_count != 1 %}s{% endif %}</div>
+  </div>
+  <div class="bg-gradient-to-br from-amber-500 to-amber-600 text-white rounded-2xl p-4 shadow-sm">
+    <div class="text-[11px] uppercase tracking-wider opacity-90">Streak</div>
+    <div class="text-3xl font-bold mt-1">{{ streak }}🔥</div>
+    <div class="text-xs opacity-90">{% if streak == 0 %}Start one today!{% else %}consecutive day{% if streak != 1 %}s{% endif %}{% endif %}</div>
+  </div>
+  <div class="bg-gradient-to-br from-rose-500 to-rose-700 text-white rounded-2xl p-4 shadow-sm">
+    <div class="text-[11px] uppercase tracking-wider opacity-90">Open tasks</div>
+    <div class="text-3xl font-bold mt-1">{{ open_tasks_count }}</div>
+    <div class="text-xs opacity-90">
+      {% if overdue_tasks %}{{ overdue_tasks|length }} overdue · {% endif %}{{ today_tasks|length }} today
+    </div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+
+  <!-- ===== Left col: weekly chart + heads up ===== -->
+  <section class="lg:col-span-2 space-y-6">
+
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold">Study time this week</h3>
+        <span class="text-xs text-slate-500">{{ week_start.strftime("%d %b") }} – {{ week_end.strftime("%d %b") }}</span>
+      </div>
+      <div class="grid grid-cols-7 gap-2 items-end h-40 border-b pb-2">
+        {% for d in daily_minutes %}
+          {% set h = (60 * d.minutes / max_minutes) | round(0) | int if max_minutes else 0 %}
+          {% set is_today = d.date == today %}
+          <div class="flex flex-col items-center gap-1 h-full justify-end" title="{{ d.minutes }} min">
+            <div class="text-[10px] text-slate-400 font-mono">{{ d.minutes }}</div>
+            <div class="w-full rounded-t-md transition
+              {% if is_today %}bg-indigo-500{% else %}bg-indigo-200 hover:bg-indigo-300{% endif %}"
+              style="height: {{ h }}%; min-height: 2px;"></div>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="grid grid-cols-7 gap-2 mt-1 text-center text-[11px]">
+        {% for d in daily_minutes %}
+          <div class="{% if d.date == today %}font-semibold text-indigo-600{% else %}text-slate-500{% endif %}">
+            {{ d.weekday }}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if total_rated %}
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3">Review quality this week</h3>
+      <div class="flex h-3 rounded-full overflow-hidden bg-slate-100">
+        {% set parts = [
+          ('again','bg-rose-500', rating_counts.again),
+          ('hard','bg-amber-500', rating_counts.hard),
+          ('good','bg-emerald-500', rating_counts.good),
+          ('easy','bg-sky-500', rating_counts.easy),
+        ] %}
+        {% for label, cls, c in parts %}
+          {% if c %}
+            <div class="{{ cls }}" style="width: {{ (100 * c / total_rated) | round(2) }}%" title="{{ label }}: {{ c }}"></div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="grid grid-cols-4 gap-2 mt-3 text-xs">
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-500"></span>Again {{ rating_counts.again }}</div>
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span>Hard {{ rating_counts.hard }}</div>
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>Good {{ rating_counts.good }}</div>
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-sky-500"></span>Easy {{ rating_counts.easy }}</div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3">Subject coverage</h3>
+      <ul class="space-y-3">
+        {% for r in subject_stats %}
+          {% set s = r.subject %}
+          <li>
+            <div class="flex items-center gap-3 mb-1">
+              <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-xl shrink-0"
+                    style="background: {{ s.color }}20">{{ s.icon or '📚' }}</span>
+              <a href="/subjects/{{ s.id }}" class="flex-1 min-w-0">
+                <div class="text-sm font-medium truncate">{{ s.name }}</div>
+                <div class="text-[11px] text-slate-500">
+                  {{ s.level }} · {{ r.studied }}/{{ r.total_topics }} topics in revision
+                  {% if r.due_now %} · <span class="text-rose-600 font-medium">{{ r.due_now }} due now</span>{% endif %}
+                </div>
+              </a>
+              <div class="text-sm font-semibold text-slate-700 w-10 text-right">{{ r.coverage }}%</div>
+            </div>
+            <div class="h-1.5 w-full bg-slate-100 rounded">
+              <div class="h-1.5 rounded" style="width: {{ r.coverage }}%; background: {{ s.color }}"></div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===== Right col: deadlines, overdue, today ===== -->
+  <aside class="space-y-6">
+
+    {% if today_plan.warnings %}
+      <section class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <h3 class="font-semibold text-sm text-amber-800 mb-2">Heads up</h3>
+        <ul class="list-disc ml-5 space-y-1 text-xs text-amber-800">
+          {% for w in today_plan.warnings %}<li>{{ w }}</li>{% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    {% if overdue_tasks %}
+      <section class="bg-white rounded-xl shadow-sm p-5 border-l-4 border-rose-500">
+        <h3 class="font-semibold mb-2 flex items-center gap-2">
+          <span class="text-lg">⏰</span> Overdue tasks
+        </h3>
+        <ul class="space-y-1 text-sm">
+          {% for t in overdue_tasks[:5] %}
+            <li class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span class="flex-1 truncate">{{ t.title }}</span>
+              <span class="text-xs text-slate-500">{{ t.scheduled_for.strftime("%d %b %H:%M") }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+        {% if overdue_tasks|length > 5 %}
+          <div class="text-xs text-slate-500 mt-2">+{{ overdue_tasks|length - 5 }} more</div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if overrides_grouped %}
+    <section class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-lg">📅</span> Date overrides
+      </h3>
+      <ul class="space-y-2 text-sm">
+        {% for grp in overrides_grouped %}
+          <li class="bg-slate-50 rounded px-3 py-2">
+            <div class="text-xs font-semibold text-slate-700">{{ grp.date.strftime("%a %d %b") }}</div>
+            <div class="flex flex-wrap items-center gap-1.5 mt-1">
+              {% for ex in grp.overrides %}
+                <span class="inline-flex items-center gap-1 rounded-full text-[11px] px-2 py-0.5
+                  {% if ex.is_blocked %}bg-rose-100 text-rose-700{% else %}bg-emerald-100 text-emerald-700{% endif %}">
+                  {% if ex.is_blocked and not ex.start_time %}🚫 whole day blocked
+                  {% elif ex.is_blocked %}🚫 {{ ex.start_time.strftime("%H:%M") }}–{{ ex.end_time.strftime("%H:%M") }}
+                  {% else %}➕ {{ ex.start_time.strftime("%H:%M") }}–{{ ex.end_time.strftime("%H:%M") }}{% endif %}
+                  {% if ex.note %}<span class="opacity-70">· {{ ex.note }}</span>{% endif %}
+                </span>
+              {% endfor %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+      <div class="mt-2 text-[11px] text-slate-500">
+        Manage in <a href="/settings" class="text-indigo-600 hover:underline">Settings</a>.
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-lg">🎯</span> Upcoming deadlines
+      </h3>
+      {% if not deadlines %}
+        <div class="text-xs text-slate-400">No deadlines in the next 30 days.</div>
+      {% endif %}
+      <ul class="space-y-3 text-sm">
+        {% for d in deadlines %}
+          {% set days_left = (d.due_date - today).days %}
+          {% set hue = (d.progress_pct * 1.2) | int %}
+          <li>
+            <div class="flex items-center gap-2">
+              <span class="pill
+                {% if d.kind == 'IA' %}bg-rose-50 text-rose-700
+                {% elif d.kind == 'EE' %}bg-purple-50 text-purple-700
+                {% elif d.kind == 'TOK' %}bg-amber-50 text-amber-700
+                {% elif d.kind == 'Mock' %}bg-sky-50 text-sky-700
+                {% else %}bg-slate-100 text-slate-700{% endif %}">{{ d.kind }}</span>
+              <span class="flex-1 truncate">{{ d.title }}</span>
+              <span class="text-xs text-slate-500 whitespace-nowrap">
+                {{ days_left }}d
+              </span>
+            </div>
+            <div class="h-1.5 w-full bg-slate-100 rounded mt-1">
+              <div class="h-1.5 rounded" style="width: {{ d.progress_pct }}%; background: hsl({{ hue }}, 70%, 45%);"></div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-lg">📚</span> My subjects
+      </h3>
+      <div class="grid grid-cols-3 gap-2">
+        {% for r in subject_stats %}
+          {% set s = r.subject %}
+          <a href="/subjects/{{ s.id }}"
+             class="group relative flex flex-col items-center justify-center p-3 rounded-xl border-t-4 bg-slate-50 hover:bg-white hover:shadow-md transition"
+             style="border-color: {{ s.color }}"
+             title="{{ s.name }} ({{ s.level }}) — {{ r.coverage }}%">
+            <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg text-2xl mb-1 group-hover:scale-110 transition"
+                  style="background: {{ s.color }}20">{{ s.icon or '📚' }}</span>
+            <div class="text-[11px] font-semibold text-slate-700 text-center leading-tight truncate w-full">
+              {{ s.name }}
+            </div>
+            <div class="text-[10px] text-slate-500">{{ r.coverage }}%</div>
+            {% if r.due_now %}
+              <span class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {{ r.due_now }}
+              </span>
+            {% endif %}
+          </a>
+        {% endfor %}
+      </div>
+      <a href="/subjects" class="block text-center text-xs text-indigo-600 hover:underline mt-3">
+        View all curriculum →
+      </a>
+    </section>
+
+    <section class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-lg">⚡</span> Quick actions
+      </h3>
+      <div class="grid grid-cols-2 gap-2 text-sm">
+        <a href="/" class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 text-center">Today</a>
+        <a href="/plan" class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 text-center">Plan</a>
+        <a href="/tasks" class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 text-center">Tasks</a>
+        <a href="/subjects" class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 text-center">Subjects</a>
+        <a href="/history" class="px-3 py-2 bg-slate-50 text-slate-700 rounded-md hover:bg-slate-100 text-center">History</a>
+        <a href="/settings" class="px-3 py-2 bg-slate-50 text-slate-700 rounded-md hover:bg-slate-100 text-center">Settings</a>
+      </div>
+    </section>
+  </aside>
+</div>
+{% endblock %}

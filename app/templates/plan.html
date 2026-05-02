@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- ===== Top: schedule for the chosen day ===== -->
+<div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <h2 class="text-xl font-semibold">Plan for {{ plan.on_date.strftime("%A, %d %b %Y") }}</h2>
+    <div class="flex gap-2 text-sm items-center">
+      <a class="px-2 py-1 border rounded" href="/plan?on={{ prev_date.isoformat() }}">← Prev</a>
+      <a class="px-2 py-1 border rounded" href="/plan">Today</a>
+      <a class="px-2 py-1 border rounded" href="/plan?on={{ next_date.isoformat() }}">Next →</a>
+      <span class="mx-1 text-slate-300">|</span>
+      <label class="flex items-center gap-1 px-2 py-1 border rounded cursor-pointer hover:bg-slate-50"
+             title="Pick a date">
+        <span>📅</span>
+        <input type="date" value="{{ plan.on_date.isoformat() }}"
+          onchange="if(this.value){location.href='/plan?on='+this.value}"
+          class="bg-transparent outline-none text-sm" />
+      </label>
+    </div>
+  </div>
+
+  {% if not plan.slots %}<div class="text-slate-500">No availability set for this day.</div>{% endif %}
+
+  {% for slot in plan.slots %}
+    <div class="mb-4">
+      <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">
+        Slot {{ loop.index }} · {{ slot.start.strftime("%H:%M") }} – {{ slot.end.strftime("%H:%M") }} ({{ slot.minutes }}m)
+      </div>
+      <ul class="space-y-2">
+        {% for item in plan.items if item.slot_index == loop.index0 %}
+          <li class="p-3 border rounded flex items-center gap-3">
+            <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-lg"
+              style="background: {{ item.subject_color }}20; color: {{ item.subject_color }}">
+              {% set sub = subjects | selectattr("name", "equalto", item.subject_name) | first %}
+              {% if sub and sub.icon %}{{ sub.icon }}{% else %}●{% endif %}
+            </span>
+            <div class="flex-1">
+              <div class="text-sm font-medium">{{ item.title }}</div>
+              <div class="text-xs text-slate-500">
+                {{ item.subject_name or '—' }} · {{ item.kind }} · {{ item.est_minutes }}m
+                {% if item.kind == 'task' %} · {{ item.progress_pct }}% done{% endif %}
+              </div>
+              {% if item.kind == 'task' and item.task_id %}
+                <div class="mt-1 h-1.5 w-full bg-slate-100 rounded">
+                  <div class="h-1.5 rounded" style="width: {{ item.progress_pct }}%; background: {{ item.subject_color }}"></div>
+                </div>
+              {% endif %}
+            </div>
+            {% if item.kind == 'task' and item.task_id %}
+              <form method="post" action="/tasks/{{ item.task_id }}/progress" class="flex items-center gap-1">
+                <input type="range" name="progress_pct" min="0" max="100" step="5"
+                  value="{{ item.progress_pct }}"
+                  oninput="this.nextElementSibling.textContent=this.value+'%'"
+                  class="w-24" />
+                <span class="text-xs text-slate-600 w-9 text-right">{{ item.progress_pct }}%</span>
+                <button class="px-2 py-1 text-xs rounded bg-indigo-100 text-indigo-700">Save</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endfor %}
+</div>
+
+<!-- ===== Add task / deadline (NOW BELOW THE SCHEDULE, ABOVE SUBJECTS) ===== -->
+{% set form_error = request.query_params.get('error') %}
+{% if form_error %}
+  <div class="mt-6 bg-rose-50 text-rose-700 text-xs px-3 py-2 rounded">{{ form_error }}</div>
+{% endif %}
+
+<section class="mt-6 grid md:grid-cols-2 gap-4">
+  <!-- New task -->
+  <div class="bg-white rounded-xl shadow-sm p-5">
+    <h3 class="font-semibold mb-3 flex items-center gap-2"><span class="text-lg">📝</span> New task</h3>
+    <form method="post" action="/tasks" class="space-y-2 text-sm" id="newTaskForm">
+      <input class="w-full border rounded px-2 py-1" name="title" placeholder="Task title" required />
+
+      <select name="subject_id" id="taskSubject" class="w-full border rounded px-2 py-1">
+        <option value="">— No subject —</option>
+        {% for s in subjects %}<option value="{{ s.id }}">{{ s.icon or '📚' }} {{ s.name }}</option>{% endfor %}
+      </select>
+
+      <select name="topic_id" id="taskTopic" class="w-full border rounded px-2 py-1" disabled>
+        <option value="">— Pick a subject first —</option>
+      </select>
+
+      <fieldset class="border rounded p-2">
+        <legend class="text-xs text-slate-500 px-1">When will you do it?</legend>
+        <div class="flex gap-2">
+          <label class="flex-1 text-xs text-slate-600">Date
+            <input class="w-full border rounded px-2 py-1" type="date" name="scheduled_date"
+              id="schedDate" value="{{ plan.on_date.isoformat() }}" required />
+          </label>
+          <label class="w-28 text-xs text-slate-600">Slot start
+            <select class="w-full border rounded px-2 py-1" name="scheduled_time" id="schedTime" required>
+              <option value="">—</option>
+            </select>
+          </label>
+          <label class="w-20 text-xs text-slate-600">Minutes
+            <input class="w-full border rounded px-2 py-1" type="number" name="est_minutes"
+              id="taskMinutes" value="30" min="5" max="240" />
+          </label>
+        </div>
+        <div id="slotHint" class="text-[11px] text-slate-400 mt-1">Pick a date to see your availability slots.</div>
+      </fieldset>
+
+      <fieldset class="border rounded p-2">
+        <legend class="text-xs text-slate-500 px-1">Repeat</legend>
+        <label class="flex items-center gap-2 text-xs text-slate-600">
+          <span>Frequency</span>
+          <select name="recurrence_kind" id="recurKind" class="border rounded px-2 py-1 flex-1">
+            <option value="none" selected>Just once</option>
+            <option value="daily">Every day</option>
+            <option value="weekly">On selected weekdays</option>
+          </select>
+        </label>
+        <div id="recurWeekdays" class="mt-2 text-xs text-slate-600 hidden">
+          <div class="mb-1">Repeat on:</div>
+          <div class="flex flex-wrap gap-1">
+            {% for i in range(7) %}
+              <label class="flex items-center gap-1 px-2 py-1 border rounded cursor-pointer hover:bg-slate-50">
+                <input type="checkbox" name="weekday_{{ i }}" value="1" />
+                <span>{{ WEEKDAYS[i] }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+        <label id="recurUntilWrap" class="block mt-2 text-xs text-slate-600 hidden">
+          Repeat until (optional)
+          <input class="mt-1 w-full border rounded px-2 py-1" type="date" name="recurrence_until" />
+        </label>
+      </fieldset>
+      <script>
+        (function () {
+          const sel = document.getElementById('recurKind');
+          const wd  = document.getElementById('recurWeekdays');
+          const ut  = document.getElementById('recurUntilWrap');
+          if (!sel) return;
+          function refresh() {
+            const v = sel.value;
+            wd.classList.toggle('hidden', v !== 'weekly');
+            ut.classList.toggle('hidden', v === 'none');
+          }
+          sel.addEventListener('change', refresh);
+          refresh();
+        })();
+      </script>
+
+      <button class="w-full bg-indigo-600 text-white rounded px-3 py-2">Add task</button>
+    </form>
+
+    <script>
+      window.__rulesByWeekday = {{ rules_by_weekday | tojson }};
+      window.__exceptionsByDate = {{ exceptions_by_date | tojson }};
+      window.__topicsBySubject = {{ topics_by_subject | tojson }};
+
+      (function () {
+        // ----- subject -> topic cascading select -----
+        const subjEl  = document.getElementById('taskSubject');
+        const topicEl = document.getElementById('taskTopic');
+        if (subjEl && topicEl) {
+          subjEl.addEventListener('change', function () {
+            topicEl.innerHTML = '';
+            const sid = this.value;
+            if (!sid) {
+              topicEl.disabled = true;
+              topicEl.appendChild(new Option('— Pick a subject first —', ''));
+              return;
+            }
+            const topics = window.__topicsBySubject[sid] || [];
+            topicEl.disabled = topics.length === 0;
+            topicEl.appendChild(new Option(
+              topics.length ? '— No specific topic —' : '— No topics in this subject —',
+              ''));
+            topics.forEach(t => topicEl.appendChild(new Option(t.label, t.id)));
+          });
+        }
+
+        // ----- date + time scheduling -----
+        const dateEl = document.getElementById('schedDate');
+        const timeEl = document.getElementById('schedTime');
+        const minEl  = document.getElementById('taskMinutes');
+        const hint   = document.getElementById('slotHint');
+        if (!dateEl) return;
+
+        function toMin(hhmm) { const [h,m] = hhmm.split(':').map(Number); return h*60+m; }
+        function pad(n) { return String(n).padStart(2,'0'); }
+
+        // Compute the actual slots for a given date (apply per-date overrides).
+        function slotsForDate(iso) {
+          const d = new Date(iso + 'T00:00:00');
+          const js = d.getDay();
+          const wd = (js === 0) ? 6 : js - 1;
+          let slots = (window.__rulesByWeekday[wd] || []).map(r => ({start: r.start, end: r.end}));
+          const exs = window.__exceptionsByDate[iso] || [];
+          exs.forEach(ex => {
+            if (ex.is_blocked) {
+              if (!ex.start || !ex.end) { slots = []; return; }
+              // subtract blocked range
+              const bs = toMin(ex.start), be = toMin(ex.end);
+              const out = [];
+              slots.forEach(s => {
+                const ss = toMin(s.start), se = toMin(s.end);
+                if (be <= ss || bs >= se) { out.push(s); return; }
+                if (bs > ss) out.push({start: s.start, end: ex.start});
+                if (be < se) out.push({start: ex.end, end: s.end});
+              });
+              slots = out;
+            } else if (ex.start && ex.end) {
+              slots.push({start: ex.start, end: ex.end});
+            }
+          });
+          slots.sort((a,b) => toMin(a.start) - toMin(b.start));
+          return slots;
+        }
+
+        function refresh() {
+          timeEl.innerHTML = '<option value="">—</option>';
+          if (!dateEl.value) {
+            hint.textContent = 'Pick a date to see your availability slots.';
+            return;
+          }
+          const slots = slotsForDate(dateEl.value);
+          if (!slots.length) {
+            hint.innerHTML = '<span class="text-rose-600">No availability slots for that date.</span> Adjust in <a href="/settings" class="text-indigo-600 underline">Settings</a>.';
+            return;
+          }
+          const minutes = parseInt(minEl.value || '30', 10);
+          const stepMin = 15;
+          const labels = [];
+          slots.forEach(s => {
+            labels.push(s.start + '–' + s.end);
+            for (let t = toMin(s.start); t + minutes <= toMin(s.end); t += stepMin) {
+              const v = pad(Math.floor(t/60)) + ':' + pad(t%60);
+              timeEl.appendChild(new Option(v, v));
+            }
+          });
+          if (timeEl.options.length === 1) {
+            hint.innerHTML = '<span class="text-amber-600">A ' + minutes + '-minute task does not fit in any slot for that day.</span> Try a shorter duration or a different date.';
+          } else {
+            hint.innerHTML = 'Slots that day: <code>' + labels.join(', ') + '</code>';
+          }
+        }
+        dateEl.addEventListener('change', refresh);
+        minEl .addEventListener('input', refresh);
+        // Pre-populate slot list for the date already filled in (the page's plan date).
+        refresh();
+      })();
+    </script>
+  </div>
+
+  <!-- New deadline -->
+  <div class="bg-white rounded-xl shadow-sm p-5">
+    <h3 class="font-semibold mb-3 flex items-center gap-2"><span class="text-lg">🎯</span> New deadline (IA / EE / TOK / Mock)</h3>
+    <form method="post" action="/deadlines" class="space-y-2 text-sm" id="newDeadlineForm">
+      <input type="hidden" name="kind" value="Test" />
+      <input class="w-full border rounded px-2 py-1" name="title" placeholder="Title (e.g. Chem IA draft, EE Reflection 1)" required />
+      <select name="subject_id" id="deadlineSubject" class="w-full border rounded px-2 py-1">
+        <option value="">— No subject —</option>
+        {% for s in subjects %}<option value="{{ s.id }}">{{ s.icon or '📚' }} {{ s.name }}</option>{% endfor %}
+      </select>
+      <select name="topic_id" id="deadlineTopic" class="w-full border rounded px-2 py-1" disabled>
+        <option value="">— Pick a subject first —</option>
+      </select>
+      <input class="w-full border rounded px-2 py-1" type="date" name="due_date" required />
+      <button class="w-full bg-rose-600 text-white rounded px-3 py-2">Add deadline</button>
+    </form>
+    <script>
+      (function () {
+        const subjEl = document.getElementById('deadlineSubject');
+        const topicEl = document.getElementById('deadlineTopic');
+        if (!subjEl || !topicEl) return;
+        subjEl.addEventListener('change', function () {
+          topicEl.innerHTML = '';
+          const sid = this.value;
+          if (!sid) {
+            topicEl.disabled = true;
+            topicEl.appendChild(new Option('— Pick a subject first —', ''));
+            return;
+          }
+          const topics = window.__topicsBySubject[sid] || [];
+          topicEl.disabled = topics.length === 0;
+          topicEl.appendChild(new Option(
+            topics.length ? '— No specific topic —' : '— No topics in this subject —',
+            ''));
+          topics.forEach(t => topicEl.appendChild(new Option(t.label, t.id)));
+        });
+      })();
+    </script>
+  </div>
+</section>
+
+<!-- ===== Bottom: by-subject grid ===== -->
+<section class="mt-6">
+  <h3 class="text-sm font-semibold text-slate-700 mb-3">By subject</h3>
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    {% for s in subjects %}
+      {% set s_items = items_by_subject.get(s.name, []) %}
+      {% set s_minutes = s_items | sum(attribute='est_minutes') %}
+      <a href="/subjects/{{ s.id }}"
+         class="block bg-white rounded-xl shadow-sm p-4 border-t-4 hover:shadow-md transition"
+         style="border-color: {{ s.color }}">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg text-2xl"
+                style="background: {{ s.color }}20">{{ s.icon or '📚' }}</span>
+          <div class="min-w-0">
+            <div class="font-semibold text-sm truncate">{{ s.name }}</div>
+            <div class="text-[10px] uppercase tracking-wide text-slate-400">{{ s.level }}</div>
+          </div>
+        </div>
+        <div class="text-xs text-slate-500 mb-2">
+          {{ s_items|length }} item{% if s_items|length != 1 %}s{% endif %} · {{ s_minutes }}m
+        </div>
+        {% if s_items %}
+          <ul class="space-y-1 text-xs">
+            {% for item in s_items[:4] %}
+              <li class="flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full" style="background: {{ s.color }}"></span>
+                <span class="truncate">{{ item.title }}</span>
+              </li>
+            {% endfor %}
+            {% if s_items|length > 4 %}
+              <li class="text-slate-400">+{{ s_items|length - 4 }} more</li>
+            {% endif %}
+          </ul>
+        {% else %}
+          <div class="text-xs text-slate-400 italic">Nothing scheduled today.</div>
+        {% endif %}
+      </a>
+    {% endfor %}
+  </div>
+
+  {% set unassigned = items_by_subject.get("(no subject)", []) %}
+  {% if unassigned %}
+    <div class="mt-4 bg-white rounded-xl shadow-sm p-4 border-t-4 border-slate-300">
+      <div class="font-semibold text-sm mb-2">Other / no subject</div>
+      <ul class="text-xs space-y-1">
+        {% for item in unassigned %}
+          <li>· {{ item.title }} ({{ item.est_minutes }}m)</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

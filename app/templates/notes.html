@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid md:grid-cols-3 gap-6">
+  <section class="md:col-span-2 bg-white rounded-xl shadow-sm p-5">
+    <h2 class="text-xl font-semibold mb-4">Notes & uploads</h2>
+
+    {% if not files %}
+      <div class="text-slate-500 text-sm">No files yet. Upload a syllabus PDF, lecture slides, or a photo of your handwritten notes.</div>
+    {% endif %}
+
+    <ul class="space-y-2">
+      {% for f in files %}
+        <li class="border rounded p-3">
+          <div class="flex items-center gap-3">
+            <div class="flex-1">
+              <div class="text-sm font-medium">{{ f.filename }}</div>
+              <div class="text-xs text-slate-500">{{ f.mime }} · {{ f.created_at.strftime("%d %b %H:%M") }}</div>
+            </div>
+            {% if f.extracted_text %}
+              <span class="pill bg-emerald-50 text-emerald-700">text extracted</span>
+            {% else %}
+              <span class="pill bg-slate-100 text-slate-600">stored</span>
+            {% endif %}
+          </div>
+          {% if f.extracted_text %}
+            <details class="mt-2">
+              <summary class="text-xs text-indigo-600 cursor-pointer">Preview text ({{ f.extracted_text|length }} chars)</summary>
+              <pre class="mt-2 text-xs bg-slate-50 p-2 rounded whitespace-pre-wrap">{{ f.extracted_text[:1500] }}{% if f.extracted_text|length > 1500 %}…{% endif %}</pre>
+            </details>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <aside class="bg-white rounded-xl shadow-sm p-5">
+    <h3 class="font-semibold mb-3">Upload</h3>
+    <form method="post" action="/notes/upload" enctype="multipart/form-data" class="space-y-2 text-sm">
+      <input type="file" name="file" required class="w-full text-xs" />
+      <select name="subject_id" class="w-full border rounded px-2 py-1">
+        <option value="">— Subject (optional) —</option>
+        {% for s in subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+      </select>
+      <label class="flex items-center gap-2 text-xs text-slate-600">
+        <input type="checkbox" name="extract_syllabus" value="1" />
+        This is a syllabus — extract topics into the chosen subject
+      </label>
+      <button class="w-full bg-indigo-600 text-white rounded px-3 py-2">Upload</button>
+    </form>
+    <div class="mt-4 text-xs text-slate-500">
+      Supported: PDF, images (JPG/PNG), text files. With Anthropic key set, images & PDFs are OCR'd via Claude vision.
+    </div>
+  </aside>
+</div>
+{% endblock %}

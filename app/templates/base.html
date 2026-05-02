@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{% block title %}Maznify{% endblock %}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1' y1='0' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%23ec4899'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect rx='14' width='64' height='64' fill='url(%23g)'/%3E%3Ctext x='32' y='44' font-family='ui-sans-serif,system-ui' font-size='34' font-weight='700' text-anchor='middle' fill='white'%3EM%3C/text%3E%3C/svg%3E" />
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .pill { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium; }
+
+  /* Single-bar progress slider: track fills red→green based on --p / --c. */
+  input[type="range"].progress-bar {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 10px;
+    border-radius: 9999px;
+    background: linear-gradient(to right,
+      var(--c, #ef4444) 0%,
+      var(--c, #ef4444) var(--p, 0%),
+      #e2e8f0 var(--p, 0%),
+      #e2e8f0 100%);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"].progress-bar::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 9999px;
+    background: white;
+    border: 2px solid var(--c, #ef4444);
+    cursor: pointer;
+  }
+  input[type="range"].progress-bar::-moz-range-thumb {
+    width: 14px; height: 14px;
+    border-radius: 9999px;
+    background: white;
+    border: 2px solid var(--c, #ef4444);
+    cursor: pointer;
+  }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+{# ---- Nav config: each item has icon, label, color (Tailwind palette base). ---- #}
+{% set NAV_ITEMS = [
+  ('/dashboard', '📊', 'Dashboard', 'indigo'),
+  ('/',          '🌞', 'Today',     'amber'),
+  ('/plan',      '🗓️', 'Plan',      'sky'),
+  ('/subjects',  '📚', 'Subjects',  'emerald'),
+  ('/tasks',     '✅', 'Tasks',     'violet'),
+  ('/deadlines', '🎯', 'Deadlines', 'rose'),
+  ('/history',   '📈', 'History',   'cyan'),
+  ('/chat',      '🤖', 'AI Coach',  'pink'),
+  ('/settings',  '⚙️', 'Settings',  'slate'),
+] %}
+{% set _path = request.url.path %}
+
+<header class="bg-white border-b sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-white/85">
+  <div class="max-w-7xl mx-auto px-3 py-2 flex items-center gap-2">
+    <a href="/dashboard" class="flex items-center gap-2 group shrink-0">
+      <span class="inline-flex items-center justify-center w-9 h-9 rounded-xl shadow-md
+        bg-gradient-to-br from-indigo-500 via-fuchsia-500 to-pink-500 text-white font-extrabold text-lg
+        group-hover:scale-110 group-hover:rotate-3 transition">M</span>
+      <span class="hidden sm:inline font-extrabold text-lg tracking-tight bg-gradient-to-r from-indigo-600 via-fuchsia-600 to-pink-600 bg-clip-text text-transparent">
+        Maznify
+      </span>
+    </a>
+
+    <nav class="flex items-center gap-1 text-sm flex-1 min-w-0 overflow-x-auto whitespace-nowrap py-0.5 px-1
+                [scrollbar-width:thin]">
+      {% for href, icon, label, color in NAV_ITEMS %}
+        {% set active = _path == href or (href != '/' and _path.startswith(href)) %}
+        <a href="{{ href }}"
+           class="group inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-medium transition shrink-0
+             {% if active %}
+               bg-{{ color }}-100 text-{{ color }}-700 ring-1 ring-{{ color }}-200 shadow-sm
+             {% else %}
+               text-slate-600 hover:bg-{{ color }}-50 hover:text-{{ color }}-700
+             {% endif %}">
+          <span class="text-base leading-none">{{ icon }}</span>
+          <span class="hidden md:inline">{{ label }}</span>
+        </a>
+      {% endfor %}
+      {% if current_user and current_user.is_admin %}
+        {% set active = _path.startswith('/admin') %}
+        <a href="/admin/users"
+           class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-medium transition shrink-0
+             {% if active %}
+               bg-fuchsia-100 text-fuchsia-700 ring-1 ring-fuchsia-200 shadow-sm
+             {% else %}
+               text-slate-600 hover:bg-fuchsia-50 hover:text-fuchsia-700
+             {% endif %}">
+          <span class="text-base leading-none">👥</span><span class="hidden md:inline">Users</span>
+        </a>
+      {% endif %}
+    </nav>
+
+    <div class="flex items-center gap-2 text-sm shrink-0">
+      {% if current_user %}
+        <a href="/account"
+           class="flex items-center gap-2 px-1.5 py-1 rounded-full hover:bg-slate-100 transition">
+          <span class="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-pink-500 text-white font-bold text-xs flex items-center justify-center uppercase">
+            {{ (current_user.display_name or current_user.username)[0] }}
+          </span>
+          <span class="text-slate-700 hidden xl:inline">{{ current_user.display_name or current_user.username }}</span>
+        </a>
+        <form method="post" action="/logout" class="inline">
+          <button class="text-xs px-2.5 py-1.5 rounded-full text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition">
+            Logout
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+{# Tailwind CDN class safelist — Tailwind needs to see literal class names so
+   dynamic colors above are picked up. These dummy spans are not rendered. #}
+<span class="hidden
+  bg-indigo-50 bg-indigo-100 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-700 ring-indigo-200
+  bg-amber-50 bg-amber-100 text-amber-700 hover:bg-amber-50 hover:text-amber-700 ring-amber-200
+  bg-sky-50 bg-sky-100 text-sky-700 hover:bg-sky-50 hover:text-sky-700 ring-sky-200
+  bg-emerald-50 bg-emerald-100 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700 ring-emerald-200
+  bg-violet-50 bg-violet-100 text-violet-700 hover:bg-violet-50 hover:text-violet-700 ring-violet-200
+  bg-rose-50 bg-rose-100 text-rose-700 hover:bg-rose-50 hover:text-rose-700 ring-rose-200
+  bg-cyan-50 bg-cyan-100 text-cyan-700 hover:bg-cyan-50 hover:text-cyan-700 ring-cyan-200
+  bg-pink-50 bg-pink-100 text-pink-700 hover:bg-pink-50 hover:text-pink-700 ring-pink-200
+  bg-slate-50 bg-slate-100 text-slate-700 hover:bg-slate-50 hover:text-slate-700 ring-slate-200
+  bg-fuchsia-50 bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-50 hover:text-fuchsia-700 ring-fuchsia-200
+"></span>
+<main class="max-w-6xl mx-auto px-4 py-6">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

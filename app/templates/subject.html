@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+
+{#
+  Recursive macro: render a topic and any sub-topics under it.
+  Bulk "Select all unstudied" only ticks topics with state == 0.
+  Review buttons (Again/Hard/Good/Easy) are only shown once a topic has been
+  seeded into FSRS (state > 0).
+#}
+{% macro render_topic(t, files_by_topic, depth=0) %}
+  {# state styling — but if this topic has children, derive its display state
+     from its children's state (a parent can't be "complete" until all sub-units
+     are at least studied). #}
+  {% set has_children = (t.children | length) > 0 %}
+  {% set children_total = t.children | length %}
+  {% set children_studied = t.children | selectattr("state") | list | length if has_children else 0 %}
+  {% set effective_state = t.state %}
+  {% if has_children %}
+    {% if children_studied == 0 %}
+      {% set effective_state = 0 %}
+    {% elif children_studied < children_total %}
+      {% set effective_state = 1 %}
+    {% else %}
+      {% set effective_state = t.state if t.state else 2 %}
+    {% endif %}
+  {% endif %}
+
+  {% set state_label = '' %}
+  {% set state_color = '' %}
+  {% if effective_state == 0 %}
+    {% set state_label = 'Not studied' %}
+    {% set state_color = 'bg-slate-100 text-slate-600' %}
+  {% elif effective_state == 1 %}
+    {% if has_children %}
+      {% set state_label = children_studied ~ '/' ~ children_total ~ ' sub-units in revision' %}
+    {% else %}
+      {% set state_label = 'Learning' %}
+    {% endif %}
+    {% set state_color = 'bg-amber-100 text-amber-700' %}
+  {% elif effective_state == 2 %}
+    {% set state_label = 'In rotation' %}
+    {% set state_color = 'bg-emerald-100 text-emerald-700' %}
+  {% elif effective_state == 3 %}
+    {% set state_label = 'Relearning' %}
+    {% set state_color = 'bg-rose-100 text-rose-700' %}
+  {% endif %}
+
+  <li id="topic-{{ t.id }}"
+      class="group rounded-xl border border-slate-200 bg-white hover:border-indigo-200 hover:shadow-sm transition"
+      style="margin-left: {{ depth * 24 }}px">
+    <div class="p-4">
+      <div class="flex items-start gap-3">
+        {% if t.state == 0 %}
+          <input type="checkbox" form="bulkForm" name="topic_ids" value="{{ t.id }}"
+            class="mt-1 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+        {% else %}
+          <span class="mt-0.5 w-5 h-5 inline-flex items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs"
+                title="In revision rotation">✓</span>
+        {% endif %}
+
+        <div class="flex-1 min-w-0">
+          <div class="flex items-baseline gap-2 flex-wrap">
+            {% if depth > 0 %}<span class="text-slate-300">↳</span>{% endif %}
+            {% if t.code %}
+              <span class="font-mono text-xs text-slate-400">{{ t.code }}</span>
+            {% endif %}
+            <h4 class="font-medium text-slate-800 truncate">{{ t.title }}</h4>
+            <span class="pill {{ state_color }}">{{ state_label }}</span>
+            {% if t.children %}
+              <span class="pill bg-indigo-50 text-indigo-700">{{ t.children|length }} sub</span>
+            {% endif %}
+          </div>
+          <div class="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+            <span>Weight {{ t.ib_weight }}/5</span>
+            {% if t.due %}
+              <span>· Next review <span class="font-medium text-slate-700">{{ t.due.strftime("%a %d %b") }}</span></span>
+            {% endif %}
+            {% if t.completed_on %}
+              <span>· Seeded {{ t.completed_on.strftime("%d %b") }} ({{ t.initial_recall }})</span>
+            {% endif %}
+            {% if t.reps %}<span>· {{ t.reps }} reviews</span>{% endif %}
+            {% if t.notes %}<span>· 📝 {{ t.notes|length }} chars</span>{% endif %}
+            {% if files_by_topic.get(t.id) %}<span>· 📎 {{ files_by_topic[t.id]|length }}</span>{% endif %}
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1 shrink-0">
+          {% if t.state > 0 %}
+            {% set last_rating = topic_last_rating.get(t.id) %}
+            {% if last_rating %}
+              {% set _bg = {'again':'bg-rose-100 text-rose-700','hard':'bg-amber-100 text-amber-700','good':'bg-emerald-100 text-emerald-700','easy':'bg-sky-100 text-sky-700'} %}
+              <details class="relative">
+                <summary class="px-3 py-1 text-xs rounded-md cursor-pointer list-none {{ _bg.get(last_rating, 'bg-slate-100 text-slate-700') }}">
+                  ✓ {{ last_rating | capitalize }} <span class="ml-1 opacity-60">▾</span>
+                </summary>
+                <form method="post" action="/topics/{{ t.id }}/review"
+                      class="absolute right-0 mt-1 z-10 bg-white border rounded-lg shadow-lg p-2 flex gap-1">
+                  <button name="rating" value="again" class="px-2 py-1 text-xs rounded-md bg-rose-100 text-rose-700">Again</button>
+                  <button name="rating" value="hard"  class="px-2 py-1 text-xs rounded-md bg-amber-100 text-amber-700">Hard</button>
+                  <button name="rating" value="good"  class="px-2 py-1 text-xs rounded-md bg-emerald-100 text-emerald-700">Good</button>
+                  <button name="rating" value="easy"  class="px-2 py-1 text-xs rounded-md bg-sky-100 text-sky-700">Easy</button>
+                </form>
+              </details>
+            {% else %}
+              <form method="post" action="/topics/{{ t.id }}/review" class="flex gap-1">
+                <button name="rating" value="again" class="px-2 py-1 text-xs rounded-md bg-rose-100 text-rose-700 hover:bg-rose-200">Again</button>
+                <button name="rating" value="hard"  class="px-2 py-1 text-xs rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200">Hard</button>
+                <button name="rating" value="good"  class="px-2 py-1 text-xs rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200">Good</button>
+                <button name="rating" value="easy"  class="px-2 py-1 text-xs rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200">Easy</button>
+              </form>
+            {% endif %}
+          {% else %}
+            <span class="text-[11px] text-slate-400 italic px-2">tick &amp; submit to start</span>
+          {% endif %}
+          {% if t.state > 0 %}
+            <form method="post" action="/topics/{{ t.id }}/reset">
+              <button onclick="return confirm('Reset this topic back to “Not studied”? You can re-seed it any time. Review history is preserved.');"
+                class="ml-1 p-1.5 rounded-md text-slate-300 hover:bg-amber-50 hover:text-amber-600 opacity-0 group-hover:opacity-100 transition"
+                title="Reset to not studied">↺</button>
+            </form>
+          {% endif %}
+          <form method="post" action="/topics/{{ t.id }}/delete">
+            <button onclick="return confirm('Remove this topic and any sub-units? Review history will be deleted.');"
+              class="ml-1 p-1.5 rounded-md text-slate-300 hover:bg-rose-50 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition"
+              title="Remove topic">✕</button>
+          </form>
+        </div>
+      </div>
+
+      {# Notes + uploads expander #}
+      <details class="mt-3" {% if t.notes or files_by_topic.get(t.id) %}open{% endif %}>
+        <summary class="text-xs text-indigo-600 cursor-pointer select-none hover:text-indigo-700">
+          📝 Notes &amp; attachments
+        </summary>
+
+        <div class="mt-3 grid md:grid-cols-2 gap-3">
+          <!-- notes card -->
+          <div class="bg-slate-50 rounded-lg p-3">
+            <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5 font-medium">Your notes</div>
+            <form method="post" action="/topics/{{ t.id }}/notes">
+              <textarea name="notes_text" rows="4"
+                placeholder="Notes for this unit (the AI Coach can search these)…"
+                class="w-full text-xs border border-slate-200 bg-white rounded-md px-2 py-2 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300">{{ t.notes }}</textarea>
+              <div class="flex justify-end mt-1">
+                <button class="px-3 py-1 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Save notes</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- attachments card -->
+          <div class="bg-slate-50 rounded-lg p-3">
+            <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5 font-medium">Attachments</div>
+
+            {% set files = files_by_topic.get(t.id, []) %}
+            {% if files %}
+              <ul class="space-y-1.5 mb-2">
+                {% for f in files %}
+                  {% set kind = f.mime.split('/')[0] %}
+                  {% set fname = f.filename | lower %}
+                  {% set is_pdf = (f.mime == 'application/pdf') or fname.endswith('.pdf') %}
+                  {% set is_image = kind == 'image' %}
+                  {% set is_text = (kind == 'text') or fname.endswith('.txt') or fname.endswith('.md') %}
+                  {% set ico = '📄' %}
+                  {% if is_pdf %}{% set ico = '📕' %}{% endif %}
+                  {% if is_image %}{% set ico = '🖼️' %}{% endif %}
+                  {% if is_text %}{% set ico = '📝' %}{% endif %}
+                  <li class="flex items-center gap-2 bg-white rounded-md border border-slate-200 px-2 py-1.5 text-xs">
+                    <span class="text-base">{{ ico }}</span>
+                    <span class="flex-1 truncate" title="{{ f.filename }}">{{ f.filename }}</span>
+                    {% if f.extracted_text %}
+                      <span class="pill bg-emerald-50 text-emerald-700" title="OCR'd / text extracted">text</span>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <div class="text-xs text-slate-400 italic mb-2">No files yet.</div>
+            {% endif %}
+
+            <form method="post" action="/topics/{{ t.id }}/upload" enctype="multipart/form-data"
+                  class="flex flex-wrap items-center gap-2 text-xs border-t border-slate-200 pt-2">
+              <input type="file" name="file" required class="text-xs" />
+              <button class="px-2 py-1 bg-slate-700 text-white rounded-md hover:bg-slate-800">Upload</button>
+              <span class="text-slate-400 text-[11px]">PDF / image / text · OCR via Claude when image/PDF</span>
+            </form>
+          </div>
+        </div>
+
+        {# add sub-unit form #}
+        <form method="post" action="/topics/{{ t.id }}/subtopic"
+              class="mt-3 flex flex-wrap items-center gap-2 text-xs border-t pt-2">
+          <span class="text-slate-500 font-medium">Add sub-unit:</span>
+          <input name="code" placeholder="Code" class="border border-slate-200 rounded-md px-2 py-1 w-20" />
+          <input name="title" placeholder="Title" required class="border border-slate-200 rounded-md px-2 py-1 flex-1 min-w-[140px]" />
+          <input type="number" name="ib_weight" min="1" max="5" value="3" class="border border-slate-200 rounded-md px-2 py-1 w-14" title="Weight 1–5" />
+          <button class="px-2 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Add</button>
+        </form>
+      </details>
+    </div>
+
+    {% if t.children %}
+      <ul class="space-y-2 px-3 pb-3 border-t border-slate-100 pt-3 bg-slate-50/50 rounded-b-xl">
+        {% for child in t.children %}
+          {{ render_topic(child, files_by_topic, depth + 1) }}
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </li>
+{% endmacro %}
+
+{% block content %}
+{% set top_level = user_topics | selectattr("parent_id", "none") | list %}
+{% set total = user_topics | length %}
+{% set studied = user_topics | selectattr("state") | list | length %}
+{% set pct = (100 * studied / total) | round(0) | int if total else 0 %}
+
+<!-- ===== Subject hero header ===== -->
+<div class="rounded-2xl shadow-sm p-6 mb-6 text-white"
+     style="background: linear-gradient(135deg, {{ subject.color }} 0%, {{ subject.color }}cc 100%);">
+  <div class="flex items-center gap-4">
+    <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-sm text-4xl">
+      {{ subject.icon or '📚' }}
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="text-[11px] uppercase tracking-wider opacity-90">{{ subject.level }}</div>
+      <h1 class="text-2xl font-bold truncate">{{ subject.name }}</h1>
+      <div class="text-xs opacity-90 mt-1">
+        {{ studied }} of {{ total }} topics in revision · {{ pct }}% coverage
+      </div>
+    </div>
+    <div class="hidden md:block min-w-[180px]">
+      <div class="h-2 w-full bg-white/30 rounded-full overflow-hidden">
+        <div class="h-2 bg-white rounded-full" style="width: {{ pct }}%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+  <section class="lg:col-span-2 space-y-3">
+    {% if not user_topics %}
+      <div class="bg-white rounded-xl shadow-sm p-6 text-center text-sm text-slate-500">
+        <div class="text-3xl mb-2">📭</div>
+        No topics yet. Add one on the right or run <code>python -m app.seed</code> to load the IB curriculum.
+      </div>
+    {% endif %}
+
+    <!-- Bulk "previously studied" form (referenced by checkboxes via form="bulkForm") -->
+    <form method="post" action="/subjects/{{ subject.id }}/bulk-complete" id="bulkForm">
+      {% if user_topics %}
+      <div class="sticky top-0 z-10 bg-white/90 backdrop-blur border border-slate-200 rounded-xl p-3 mb-3 flex flex-wrap items-center gap-2 text-xs shadow-sm">
+        <span class="font-semibold text-slate-700">Mark previously studied:</span>
+        <label class="flex items-center gap-1">Date
+          <input type="date" name="completed_on" value="{{ today.isoformat() }}"
+            class="border border-slate-200 rounded-md px-2 py-1" />
+        </label>
+        <label class="flex items-center gap-1">How well do you remember it?
+          <select name="recall" class="border border-slate-200 rounded-md px-2 py-1">
+            <option value="forgot">Again — forgot most</option>
+            <option value="shaky">Hard — shaky</option>
+            <option value="solid" selected>Good — solid</option>
+            <option value="strong">Easy — very strong</option>
+          </select>
+        </label>
+        <button type="button"
+                class="px-2 py-1 border border-slate-200 rounded-md hover:bg-slate-50"
+                onclick="document.querySelectorAll('input[form=bulkForm][name=topic_ids]').forEach(c=>c.checked=true)">
+          Select all unstudied
+        </button>
+        <button type="button"
+                class="px-2 py-1 border border-slate-200 rounded-md hover:bg-slate-50"
+                onclick="document.querySelectorAll('input[form=bulkForm][name=topic_ids]').forEach(c=>c.checked=false)">
+          Clear
+        </button>
+        <button class="ml-auto px-3 py-1.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Add selected</button>
+      </div>
+      {% endif %}
+    </form>
+
+    <ul class="space-y-3">
+      {% for t in top_level %}
+        {{ render_topic(t, files_by_topic, 0) }}
+      {% endfor %}
+    </ul>
+  </section>
+
+  <aside class="space-y-4">
+    <section class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-lg">➕</span> Add top-level topic
+      </h3>
+      <form method="post" action="/subjects/{{ subject.id }}/topics" class="space-y-2 text-sm">
+        <input class="w-full border border-slate-200 rounded-md px-3 py-2" name="code" placeholder="Code (e.g. 2.3)" />
+        <input class="w-full border border-slate-200 rounded-md px-3 py-2" name="title" placeholder="Title" required />
+        <label class="block text-xs">Importance (1–5)
+          <input class="mt-1 w-full border border-slate-200 rounded-md px-3 py-2" name="ib_weight" type="number" min="1" max="5" value="3" />
+        </label>
+        <button class="w-full bg-indigo-600 text-white rounded-md px-3 py-2 hover:bg-indigo-700">Add topic</button>
+      </form>
+      <div class="mt-3 text-xs text-slate-500">
+        For sub-units, expand a topic and use its inline "Add sub-unit" form.
+      </div>
+    </section>
+
+    <section class="bg-white rounded-xl shadow-sm p-5">
+      <h3 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-lg">🔁</span> Spaced revision status
+      </h3>
+      {% set total_topics = user_topics | length %}
+      {% set in_review_topics = user_topics | selectattr('state') | list %}
+      {% set count_new = total_topics - (in_review_topics | length) %}
+      {% set count_learning = in_review_topics | selectattr('state', 'equalto', 1) | list | length %}
+      {% set count_review = in_review_topics | selectattr('state', 'equalto', 2) | list | length %}
+      {% set count_relearn = in_review_topics | selectattr('state', 'equalto', 3) | list | length %}
+
+      {% if total_topics %}
+        <div class="grid grid-cols-2 gap-2 text-xs mb-4">
+          <div class="bg-slate-50 rounded p-2 text-center">
+            <div class="text-lg font-bold text-slate-700">{{ count_new }}</div>
+            <div class="text-slate-500">Not studied</div>
+          </div>
+          <div class="bg-amber-50 rounded p-2 text-center">
+            <div class="text-lg font-bold text-amber-700">{{ count_learning }}</div>
+            <div class="text-amber-700">Learning</div>
+          </div>
+          <div class="bg-emerald-50 rounded p-2 text-center">
+            <div class="text-lg font-bold text-emerald-700">{{ count_review }}</div>
+            <div class="text-emerald-700">In rotation</div>
+          </div>
+          <div class="bg-rose-50 rounded p-2 text-center">
+            <div class="text-lg font-bold text-rose-700">{{ count_relearn }}</div>
+            <div class="text-rose-700">Relearning</div>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="space-y-2 text-xs text-slate-700">
+        <div class="font-semibold text-slate-800 mb-1">What the labels mean</div>
+        <ul class="space-y-2">
+          <li class="flex items-start gap-2">
+            <span class="pill bg-slate-100 text-slate-600 mt-0.5 shrink-0">Not studied</span>
+            <span class="flex-1">You haven't added it to revision yet — tick the box and submit at the top to seed it.</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="pill bg-amber-100 text-amber-700 mt-0.5 shrink-0">Learning</span>
+            <span class="flex-1">A new topic in the early ramp-up — short intervals as the algorithm calibrates.</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="pill bg-emerald-100 text-emerald-700 mt-0.5 shrink-0">In rotation</span>
+            <span class="flex-1">Settled into long-term revision — intervals grow each time you rate <em>Good</em> or <em>Easy</em>.</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="pill bg-rose-100 text-rose-700 mt-0.5 shrink-0">Relearning</span>
+            <span class="flex-1">You rated <em>Again</em> recently — pulled back to short intervals until you're solid again.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="bg-indigo-50 rounded-xl p-5 text-xs text-indigo-900">
+      <h3 class="font-semibold mb-2 text-sm flex items-center gap-2">
+        <span class="text-lg">💡</span> How spaced revision works
+      </h3>
+      <p>Tick topics you've already studied, choose how well you remember each, and click <em>Add selected</em>. Each topic is then scheduled by FSRS — it shows up in <a href="/" class="underline font-medium">Today</a> on the right day automatically.</p>
+      <p class="mt-2">Each review you rate <em>Again / Hard / Good / Easy</em>: <em>Easy</em> pushes the next review weeks out, <em>Again</em> pulls it back to short intervals.</p>
+      <p class="mt-2">Need to take a topic <strong>back out</strong> of revision? Click the ↺ <em>Reset</em> button on its row — it goes back to "Not studied" without losing review history.</p>
+    </section>
+  </aside>
+</div>
+{% endblock %}

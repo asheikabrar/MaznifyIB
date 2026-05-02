@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block content %}
+{% set error = request.query_params.get('error') %}
+<div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+  <h2 class="text-xl font-semibold mb-1">Users</h2>
+  <p class="text-xs text-slate-500 mb-4">
+    Admins can add, edit, delete users, and assign each user an Anthropic API key for the AI Coach.
+  </p>
+
+  {% if error %}
+    <div class="bg-rose-50 text-rose-700 text-xs px-3 py-2 rounded mb-3">{{ error }}</div>
+  {% endif %}
+
+  <ul class="space-y-3">
+    {% for u in users %}
+      {% set has_key = (u.anthropic_api_key or '') | length > 0 %}
+      <li class="border rounded-lg">
+        <details>
+          <summary class="flex items-center gap-3 p-3 cursor-pointer list-none hover:bg-slate-50 rounded-lg">
+            <div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold uppercase shrink-0">
+              {{ (u.display_name or u.username)[0] }}
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-medium">{{ u.username }}</span>
+                {% if u.is_admin %}<span class="pill bg-emerald-50 text-emerald-700">admin</span>{% endif %}
+                {% if u.id == current_user.id %}<span class="pill bg-indigo-50 text-indigo-700">you</span>{% endif %}
+                {% if has_key %}
+                  <span class="pill bg-sky-50 text-sky-700" title="API key set">
+                    🔑 …{{ u.anthropic_api_key[-4:] }}
+                  </span>
+                {% else %}
+                  <span class="pill bg-slate-100 text-slate-500">no API key</span>
+                {% endif %}
+              </div>
+              <div class="text-xs text-slate-500 truncate">
+                {{ u.display_name or '—' }}{% if u.email %} · {{ u.email }}{% endif %}
+                · created {{ u.created_at.strftime("%d %b %Y") }}
+              </div>
+            </div>
+            <span class="text-indigo-600 text-xs px-2 py-1 hover:bg-indigo-100 rounded shrink-0">Edit ▾</span>
+          </summary>
+
+          <div class="border-t bg-slate-50 px-3 py-3">
+          <form method="post" action="/admin/users/{{ u.id }}/edit" class="grid sm:grid-cols-2 gap-3 text-sm">
+            <label>Display name
+              <input name="display_name" value="{{ u.display_name }}"
+                class="mt-1 w-full border rounded px-2 py-1" />
+            </label>
+            <label>Email
+              <input name="email" type="email" value="{{ u.email }}"
+                class="mt-1 w-full border rounded px-2 py-1" />
+            </label>
+            <label>New password (leave blank to keep)
+              <input name="password" type="password" autocomplete="new-password"
+                class="mt-1 w-full border rounded px-2 py-1" />
+            </label>
+            <label class="flex items-center gap-2 mt-5">
+              <input type="checkbox" name="is_admin" value="1"
+                {% if u.is_admin %}checked{% endif %}
+                {% if u.id == current_user.id %}disabled{% endif %} />
+              Admin
+              {% if u.id == current_user.id %}<span class="text-slate-400 text-xs">(can't demote yourself)</span>{% endif %}
+            </label>
+            <fieldset class="sm:col-span-2 border rounded p-2 bg-white">
+              <legend class="text-xs text-slate-500 px-1">Anthropic API key</legend>
+              <div class="text-xs text-slate-500 mb-2">
+                {% if has_key %}
+                  Currently set (ends in <code>…{{ u.anthropic_api_key[-4:] }}</code>).
+                {% else %}
+                  No key — AI Coach is disabled for this user.
+                {% endif %}
+              </div>
+              <input name="anthropic_api_key" type="password" placeholder="sk-ant-…"
+                autocomplete="off"
+                class="w-full border rounded px-2 py-1 font-mono text-xs" />
+              <div class="flex items-center gap-3 mt-1 text-[11px]">
+                <label class="flex items-center gap-1">
+                  <input type="radio" name="api_key_action" value="set" checked /> Save new key (if filled)
+                </label>
+                {% if has_key %}
+                  <label class="flex items-center gap-1 text-rose-600">
+                    <input type="radio" name="api_key_action" value="clear" /> Remove existing key
+                  </label>
+                {% endif %}
+              </div>
+            </fieldset>
+            <div class="sm:col-span-2 flex justify-between items-center pt-2 border-t">
+              <span class="text-slate-500 text-xs">Created {{ u.created_at.strftime("%d %b %Y") }}</span>
+              <div class="flex gap-2">
+                <button class="px-3 py-1 bg-indigo-600 text-white rounded">Save</button>
+                {% if u.id != current_user.id %}
+                  <button formaction="/admin/users/{{ u.id }}/delete" formmethod="post"
+                    onclick="return confirm('Delete user {{ u.username }}? This cannot be undone.');"
+                    class="px-3 py-1 bg-rose-600 text-white rounded">Delete</button>
+                {% endif %}
+              </div>
+            </div>
+          </form>
+          </div>
+        </details>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="bg-white rounded-xl shadow-sm p-5">
+  <h3 class="font-semibold mb-3">Add user</h3>
+  <form method="post" action="/admin/users" class="grid sm:grid-cols-2 gap-3 text-sm">
+    <label>Username *
+      <input name="username" required class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label>Password *
+      <input name="password" type="password" required class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label>Display name
+      <input name="display_name" class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label>Email
+      <input name="email" type="email" class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label class="sm:col-span-2">Anthropic API key (optional)
+      <input name="anthropic_api_key" type="password" autocomplete="off" placeholder="sk-ant-…"
+        class="mt-1 w-full border rounded px-2 py-1 font-mono text-xs" />
+    </label>
+    <label class="flex items-center gap-2">
+      <input type="checkbox" name="is_admin" value="1" /> Admin
+    </label>
+    <div class="sm:col-span-2">
+      <button class="bg-indigo-600 text-white rounded px-4 py-2 text-sm">Add user</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

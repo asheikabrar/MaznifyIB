@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block content %}
+{% set ICON_CHOICES = [
+  '📚','📖','📝','✏️','🖊️','📓','📒','📔','📕','📗','📘','📙',
+  '🔬','🧪','⚗️','🧬','🦠','🧫','🌱','🌿','🍃','🦋','🐾',
+  '📐','📏','🧮','➗','➕','♾️','📊','📈','📉','🧾',
+  '🧠','💡','🎓','🏛️','🌐','🗺️','🧭','🕰️',
+  '💼','💰','💳','📦','🏦','📰','📣','📞',
+  '🎨','🎭','🎵','🎸','🎬','🎤','📷','🖌️',
+  '💻','⌨️','🖥️','📱','🤖','⚙️','🔧',
+  '🌍','🌏','🌎','🌌','🪐','☀️','🌙','⭐',
+  '🕌','🕋','📜','✒️','🌹','☕','🍵',
+  '⚽','🏀','🎾','🏊','🏃','🧘','🥇','🤝',
+  '❤️','🔥','✨','🌟','🚀','🎯','🏆'
+] %}
+{% set settings_error = request.query_params.get('error') %}
+{% if settings_error %}
+  <div class="bg-rose-50 text-rose-700 text-xs px-3 py-2 rounded mb-4">{{ settings_error }}</div>
+{% endif %}
+
+<!-- ===== Conflict alerts ===== -->
+{% if conflicts %}
+  <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+    <h3 class="font-semibold text-amber-900 text-sm mb-2 flex items-center gap-2">
+      <span class="text-lg">⚠️</span>
+      {{ conflicts|length }} task{% if conflicts|length > 1 %}s{% endif %} no longer fit your availability
+    </h3>
+    <p class="text-xs text-amber-800 mb-3">
+      You changed availability for these dates. Pick a new time for each task or clear its schedule.
+    </p>
+    <ul class="space-y-3">
+      {% for c in conflicts %}
+        {% set t = c.task %}
+        <li class="bg-white rounded-lg border border-amber-200 p-3">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="font-medium text-sm">{{ t.title }}</span>
+            {% if t.subject %}<span class="text-xs text-slate-500">· {{ t.subject.name }}</span>{% endif %}
+            <span class="text-xs text-slate-500 ml-auto">
+              was: {{ c.scheduled_for.strftime("%a %d %b %H:%M") }} · {{ c.minutes }}m
+            </span>
+          </div>
+          <form method="post" action="/tasks/{{ t.id }}/reschedule"
+                class="flex flex-wrap items-center gap-2 text-xs">
+            <label>Date
+              <input type="date" name="scheduled_date"
+                value="{{ c.scheduled_for.date().isoformat() }}"
+                class="border rounded px-2 py-1" />
+            </label>
+            <label>Time
+              <input type="time" name="scheduled_time"
+                value="{{ c.scheduled_for.strftime('%H:%M') }}"
+                class="border rounded px-2 py-1" />
+            </label>
+            <button class="px-3 py-1 bg-indigo-600 text-white rounded">Reschedule</button>
+            <button formaction="/tasks/{{ t.id }}/reschedule" formmethod="post" name="clear" value="1"
+              onclick="this.form.scheduled_date.value=''; this.form.scheduled_time.value='';"
+              class="px-3 py-1 bg-slate-100 text-slate-700 rounded">Clear schedule</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<!-- ===== Weekly availability ===== -->
+<div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+  <h2 class="text-xl font-semibold mb-1">Weekly study availability</h2>
+  <p class="text-xs text-slate-500 mb-4">The planner uses these slots to schedule reviews and tasks. Different days can have different times.</p>
+
+  <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+    {% for wd in range(7) %}
+      <div class="border rounded-lg p-3">
+        <div class="font-semibold text-sm mb-2">{{ WEEKDAYS[wd] }}</div>
+        <ul class="space-y-1 text-sm">
+          {% for r in by_day[wd] %}
+            <li class="flex items-center justify-between bg-slate-50 rounded px-2 py-1">
+              <span class="font-mono text-xs">{{ r.start_time.strftime("%H:%M") }} – {{ r.end_time.strftime("%H:%M") }}</span>
+              <form method="post" action="/availability/{{ r.id }}/delete">
+                <button class="text-xs text-slate-400 hover:text-rose-600" title="Remove">✕</button>
+              </form>
+            </li>
+          {% else %}
+            <li class="text-xs text-slate-400 italic">no slots</li>
+          {% endfor %}
+        </ul>
+        <form method="post" action="/availability/add" class="mt-2 flex flex-wrap gap-1 text-xs items-center">
+          <input type="hidden" name="weekday" value="{{ wd }}" />
+          <input type="time" name="start_time" required class="border rounded px-1 py-0.5" />
+          <span>–</span>
+          <input type="time" name="end_time" required class="border rounded px-1 py-0.5" />
+          <button class="px-2 py-0.5 bg-indigo-600 text-white rounded">add</button>
+        </form>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- ===== Per-date overrides ===== -->
+<div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+  <h2 class="text-xl font-semibold mb-1">Date overrides</h2>
+  <p class="text-xs text-slate-500 mb-4">
+    Going out, sick, or extra study time? Override your weekly availability for a specific date here.
+    Existing tasks scheduled in time you remove will be flagged at the top of this page.
+  </p>
+
+  {% if exceptions_grouped %}
+    <ul class="space-y-2 text-sm mb-4">
+      {% for grp in exceptions_grouped %}
+        <li class="bg-slate-50 rounded-lg px-3 py-2">
+          <div class="flex items-start gap-3 flex-wrap">
+            <span class="font-semibold whitespace-nowrap">{{ grp.date.strftime("%a %d %b %Y") }}</span>
+            <div class="flex flex-wrap items-center gap-1.5 flex-1">
+              {% for ex in grp.overrides %}
+                <span class="inline-flex items-center gap-1 rounded-full text-xs px-2 py-0.5
+                  {% if ex.is_blocked and not ex.start_time %}bg-rose-100 text-rose-700
+                  {% elif ex.is_blocked %}bg-rose-100 text-rose-700
+                  {% else %}bg-emerald-100 text-emerald-700{% endif %}">
+                  {% if ex.is_blocked and not ex.start_time %}
+                    🚫 whole day blocked
+                  {% elif ex.is_blocked %}
+                    🚫 block {{ ex.start_time.strftime("%H:%M") }}–{{ ex.end_time.strftime("%H:%M") }}
+                  {% else %}
+                    ➕ extra {{ ex.start_time.strftime("%H:%M") }}–{{ ex.end_time.strftime("%H:%M") }}
+                  {% endif %}
+                  {% if ex.note %}<span class="text-slate-500">· {{ ex.note }}</span>{% endif %}
+                  <form method="post" action="/availability/exception/{{ ex.id }}/delete" class="inline">
+                    <button class="text-current opacity-50 hover:opacity-100 hover:text-rose-700 ml-0.5"
+                      title="Remove this override">✕</button>
+                  </form>
+                </span>
+              {% endfor %}
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="text-xs text-slate-400 mb-3">No upcoming overrides.</div>
+  {% endif %}
+
+  <form method="post" action="/availability/exception"
+        class="grid sm:grid-cols-5 gap-2 text-sm border-t pt-3">
+    <label class="block sm:col-span-1 text-xs">Date
+      <input type="date" name="on_date" required class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label class="block sm:col-span-1 text-xs">What
+      <select name="mode" class="mt-1 w-full border rounded px-2 py-1">
+        <option value="block_all">Block whole day</option>
+        <option value="block_range">Block a time range</option>
+        <option value="extra">Extra availability</option>
+      </select>
+    </label>
+    <label class="block text-xs">From
+      <input type="time" name="start_time" class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label class="block text-xs">To
+      <input type="time" name="end_time" class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <label class="block sm:col-span-1 text-xs">Note (optional)
+      <input name="note" placeholder="e.g. dentist" class="mt-1 w-full border rounded px-2 py-1" />
+    </label>
+    <div class="sm:col-span-5">
+      <button class="bg-indigo-600 text-white rounded px-4 py-2 text-sm">Add override</button>
+    </div>
+  </form>
+</div>
+
+<!-- ===== Subject appearance ===== -->
+<div class="bg-white rounded-xl shadow-sm p-5">
+  <h2 class="text-xl font-semibold mb-1">Subject appearance</h2>
+  <p class="text-xs text-slate-500 mb-4">Click any icon below to change a subject's icon. Pick the color from the swatch on the right.</p>
+
+  <div class="space-y-4">
+    {% for s in subjects %}
+      <form method="post" action="/subjects/{{ s.id }}/appearance"
+            class="border rounded-lg p-3" id="appearance-{{ s.id }}">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="inline-flex items-center justify-center w-12 h-12 rounded-lg text-3xl shrink-0"
+                style="background: {{ s.color }}20"
+                id="preview-icon-{{ s.id }}">{{ s.icon or '📚' }}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold truncate">{{ s.name }}</div>
+            <div class="text-[11px] uppercase tracking-wide text-slate-400">{{ s.level }}</div>
+          </div>
+          <input type="text" name="icon" value="{{ s.icon }}" maxlength="8"
+                 class="hidden-icon-input w-16 border rounded px-2 py-1 text-center text-lg"
+                 id="icon-input-{{ s.id }}"
+                 oninput="document.getElementById('preview-icon-{{ s.id }}').textContent = this.value || '📚'" />
+          <input type="color" name="color" value="{{ s.color }}"
+                 class="w-10 h-10 border rounded cursor-pointer"
+                 oninput="document.getElementById('preview-icon-{{ s.id }}').style.background = this.value + '20'" />
+          <button class="px-3 py-2 text-sm bg-indigo-600 text-white rounded">Save</button>
+        </div>
+
+        <details class="text-sm">
+          <summary class="cursor-pointer text-indigo-600 text-xs font-medium">Browse icons ({{ ICON_CHOICES|length }})</summary>
+          <div class="mt-2 grid grid-cols-10 sm:grid-cols-14 gap-1 p-2 bg-slate-50 rounded max-h-56 overflow-y-auto">
+            {% for ic in ICON_CHOICES %}
+              <button type="button"
+                onclick="
+                  var inp=document.getElementById('icon-input-{{ s.id }}');
+                  inp.value='{{ ic }}';
+                  document.getElementById('preview-icon-{{ s.id }}').textContent='{{ ic }}';
+                "
+                class="w-8 h-8 flex items-center justify-center text-xl rounded hover:bg-indigo-100 hover:scale-110 transition
+                       {% if ic == s.icon %}bg-indigo-200 ring-2 ring-indigo-500{% endif %}"
+                title="{{ ic }}">{{ ic }}</button>
+            {% endfor %}
+          </div>
+          <div class="mt-2 text-[11px] text-slate-400">
+            Don't see what you want? Type any emoji directly in the box above.
+          </div>
+        </details>
+      </form>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

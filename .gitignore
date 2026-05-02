@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+studymate.db
+uploads/
+.DS_Store

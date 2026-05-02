@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="bg-white rounded-xl shadow-sm p-5 mb-5">
+  <div class="flex flex-wrap items-center gap-3 justify-between mb-4">
+    <h2 class="text-xl font-semibold">Deadlines</h2>
+    <a href="/plan" class="text-xs text-indigo-600 hover:underline">+ New deadline</a>
+  </div>
+
+  <form method="get" action="/deadlines" class="grid sm:grid-cols-4 gap-2 text-sm mb-3">
+    <input name="q" value="{{ q }}" placeholder="🔍 Search by title, subject or kind…"
+      class="sm:col-span-4 border rounded px-3 py-2" />
+    <select name="status" class="border rounded px-2 py-1">
+      <option value="all"  {% if status_filter == 'all'  %}selected{% endif %}>All</option>
+      <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Outstanding</option>
+      <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Completed</option>
+    </select>
+    <select name="subject_id" class="border rounded px-2 py-1">
+      <option value="">All subjects</option>
+      {% for s in subjects %}
+        <option value="{{ s.id }}" {% if subject_filter_id == s.id|string %}selected{% endif %}>
+          {{ s.icon or '📚' }} {{ s.name }}
+        </option>
+      {% endfor %}
+    </select>
+    <label class="flex items-center gap-1 text-xs text-slate-600">From
+      <input type="date" name="date_from" value="{{ date_from }}" class="flex-1 border rounded px-2 py-1" />
+    </label>
+    <label class="flex items-center gap-1 text-xs text-slate-600">To
+      <input type="date" name="date_to" value="{{ date_to }}" class="flex-1 border rounded px-2 py-1" />
+    </label>
+    <div class="sm:col-span-4 flex gap-2 flex-wrap">
+      <button class="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Filter</button>
+      {% if q or status_filter != 'all' or subject_filter_id or date_from or date_to %}
+        <a href="/deadlines" class="px-3 py-1 border rounded text-sm">Clear all</a>
+      {% endif %}
+      <span class="ml-auto text-xs text-slate-500 self-center">
+        {{ deadlines|length }} result{% if deadlines|length != 1 %}s{% endif %}
+      </span>
+    </div>
+  </form>
+</div>
+
+{% if not deadlines %}
+  <div class="bg-white rounded-xl shadow-sm p-8 text-center text-slate-500 text-sm">
+    <div class="text-3xl mb-2">🎯</div>
+    No deadlines match. <a href="/plan" class="text-indigo-600">Create one</a>.
+  </div>
+{% endif %}
+
+<ul class="space-y-2">
+  {% for d in deadlines %}
+    {% set is_done = (d.progress_pct or 0) >= 100 %}
+    {% set days_left = (d.due_date - today).days %}
+    {% set hue = (d.progress_pct * 1.2) | int %}
+    {% set sub = d.subject %}
+    <li class="bg-white rounded-xl shadow-sm border-l-4
+        {% if is_done %}border-emerald-400
+        {% elif days_left < 0 %}border-rose-500
+        {% elif days_left <= 3 %}border-amber-400
+        {% else %}border-slate-200{% endif %}">
+      <div class="p-4">
+        <div class="flex items-start gap-3">
+          <span class="pill mt-1
+            {% if d.kind == 'IA' %}bg-rose-50 text-rose-700
+            {% elif d.kind == 'EE' %}bg-purple-50 text-purple-700
+            {% elif d.kind == 'TOK' %}bg-amber-50 text-amber-700
+            {% elif d.kind == 'Mock' %}bg-sky-50 text-sky-700
+            {% else %}bg-slate-100 text-slate-700{% endif %}">{{ d.kind }}</span>
+
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              {% if sub %}
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded text-sm"
+                  style="background: {{ sub.color }}20">{{ sub.icon or '📚' }}</span>
+              {% endif %}
+              <h4 class="font-medium {% if is_done %}line-through text-slate-400{% endif %}">{{ d.title }}</h4>
+              {% if is_done %}<span class="pill bg-emerald-100 text-emerald-700">done</span>{% endif %}
+            </div>
+            <div class="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-3">
+              {% if sub %}<span>{{ sub.name }}</span>{% endif %}
+              <span>· 🕒 {{ d.due_date.strftime("%a %d %b %Y") }}</span>
+              {% if days_left > 0 %}<span class="text-slate-400">· {{ days_left }}d left</span>
+              {% elif days_left == 0 %}<span class="text-rose-600 font-medium">· today</span>
+              {% else %}<span class="text-rose-600 font-medium">· {{ -days_left }}d overdue</span>{% endif %}
+              <span>· {{ d.progress_pct }}%</span>
+            </div>
+            <form method="post" action="/deadlines/{{ d.id }}/progress" class="mt-2 flex items-center gap-2 text-xs">
+              <input type="range" name="progress_pct" min="0" max="100" step="5"
+                value="{{ d.progress_pct }}"
+                style="--p: {{ d.progress_pct }}%; --c: hsl({{ hue }}, 70%, 45%);"
+                class="progress-bar flex-1"
+                oninput="this.style.setProperty('--p', this.value+'%'); this.style.setProperty('--c', 'hsl('+(this.value*1.2)+', 70%, 45%)'); this.nextElementSibling.textContent=this.value+'%'" />
+              <span class="text-slate-600 w-9 text-right">{{ d.progress_pct }}%</span>
+              <button class="px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200">Save</button>
+            </form>
+          </div>
+
+          <div class="flex items-center gap-1 shrink-0">
+            <form method="post" action="/deadlines/{{ d.id }}/delete">
+              <button onclick="return confirm('Delete this deadline?');"
+                class="p-1.5 rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete">✕</button>
+            </form>
+          </div>
+        </div>
+
+        <details class="mt-3">
+          <summary class="text-xs text-indigo-600 cursor-pointer select-none hover:text-indigo-700">
+            ✏️ Edit
+          </summary>
+          <form method="post" action="/deadlines/{{ d.id }}/edit"
+                class="mt-3 grid sm:grid-cols-2 gap-2 text-xs bg-slate-50 rounded-lg p-3">
+            <label class="block sm:col-span-2">Title
+              <input name="title" value="{{ d.title }}"
+                class="mt-1 w-full border bg-white rounded px-2 py-1" />
+            </label>
+            <label class="block">Kind
+              <select name="kind" class="mt-1 w-full border bg-white rounded px-2 py-1">
+                {% for k in ["IA","EE","TOK","Mock","Test","Other"] %}
+                  <option value="{{ k }}" {% if d.kind == k %}selected{% endif %}>{{ k }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="block">Due date
+              <input type="date" name="due_date" value="{{ d.due_date.isoformat() }}"
+                class="mt-1 w-full border bg-white rounded px-2 py-1" />
+            </label>
+            <label class="block">Subject
+              <select name="subject_id" class="mt-1 w-full border bg-white rounded px-2 py-1 dl-subject"
+                data-deadline-id="{{ d.id }}">
+                <option value="">— No subject —</option>
+                {% for s in subjects %}
+                  <option value="{{ s.id }}" {% if d.subject_id == s.id %}selected{% endif %}>
+                    {{ s.icon or '📚' }} {{ s.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="block">Topic
+              <select name="topic_id" id="dl-topic-{{ d.id }}" class="mt-1 w-full border bg-white rounded px-2 py-1">
+                <option value="" {% if not d.topic_id %}selected{% endif %}>— No topic —</option>
+                {% if d.subject_id %}
+                  {% for tp in topics_by_subject.get(d.subject_id, []) %}
+                    <option value="{{ tp.id }}" {% if d.topic_id == tp.id %}selected{% endif %}>{{ tp.label }}</option>
+                  {% endfor %}
+                {% endif %}
+              </select>
+            </label>
+            <div class="sm:col-span-2 flex justify-end">
+              <button class="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
+            </div>
+          </form>
+        </details>
+      </div>
+    </li>
+  {% endfor %}
+</ul>
+
+<script>
+  window.__topicsBySubject = {{ topics_by_subject | tojson }};
+  document.querySelectorAll('select.dl-subject').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const did = this.dataset.deadlineId;
+      const topicEl = document.getElementById('dl-topic-' + did);
+      if (!topicEl) return;
+      const sid = this.value;
+      topicEl.innerHTML = '';
+      topicEl.appendChild(new Option('— No topic —', ''));
+      const topics = window.__topicsBySubject[sid] || [];
+      topics.forEach(t => topicEl.appendChild(new Option(t.label, t.id)));
+    });
+  });
+</script>
+{% endblock %}

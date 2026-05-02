@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="bg-white rounded-xl shadow-sm p-5 mb-5">
+  <div class="flex flex-wrap items-center gap-3 justify-between mb-4">
+    <h2 class="text-xl font-semibold">Tasks</h2>
+    <a href="/plan" class="text-xs text-indigo-600 hover:underline">+ New task</a>
+  </div>
+
+  <form method="get" action="/tasks" class="grid sm:grid-cols-4 gap-2 text-sm mb-3">
+    <input name="q" value="{{ q }}" placeholder="🔍 Search by title, subject, unit, or notes…"
+      class="sm:col-span-4 border rounded px-3 py-2" />
+    <select name="status" class="border rounded px-2 py-1">
+      <option value="all"  {% if status_filter == 'all'  %}selected{% endif %}>All status</option>
+      <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+      <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+    </select>
+    <select name="subject_id" class="border rounded px-2 py-1">
+      <option value="">All subjects</option>
+      {% for s in subjects %}
+        <option value="{{ s.id }}" {% if subject_filter_id == s.id|string %}selected{% endif %}>
+          {{ s.icon or '📚' }} {{ s.name }}
+        </option>
+      {% endfor %}
+    </select>
+    <label class="flex items-center gap-1 text-xs text-slate-600">
+      From
+      <input type="date" name="date_from" value="{{ date_from }}"
+        class="flex-1 border rounded px-2 py-1" />
+    </label>
+    <label class="flex items-center gap-1 text-xs text-slate-600">
+      To
+      <input type="date" name="date_to" value="{{ date_to }}"
+        class="flex-1 border rounded px-2 py-1" />
+    </label>
+    <div class="sm:col-span-4 flex gap-2 flex-wrap">
+      <button class="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Filter</button>
+      {% if q or status_filter != 'all' or subject_filter_id or date_from or date_to %}
+        <a href="/tasks" class="px-3 py-1 border rounded text-sm">Clear all</a>
+      {% endif %}
+      <span class="hidden sm:inline-flex items-center gap-2 text-xs text-slate-500">
+        {% if date_from or date_to %}
+          📅 {% if date_from %}from {{ date_from }}{% endif %}{% if date_to %} to {{ date_to }}{% endif %}
+        {% endif %}
+      </span>
+      <span class="ml-auto text-xs text-slate-500 self-center">
+        {{ tasks|length }} result{% if tasks|length != 1 %}s{% endif %}
+      </span>
+    </div>
+  </form>
+</div>
+
+{% if not tasks %}
+  <div class="bg-white rounded-xl shadow-sm p-8 text-center text-slate-500 text-sm">
+    <div class="text-3xl mb-2">📭</div>
+    No tasks match. Try changing the filters or
+    <a href="/plan" class="text-indigo-600">create one</a>.
+  </div>
+{% endif %}
+
+<ul class="space-y-2">
+  {% for t in tasks %}
+    {% set is_done = t.status == 'done' %}
+    {% set sub = t.subject %}
+    {% set tfiles = files_by_task.get(t.id, []) %}
+    <li class="bg-white rounded-xl shadow-sm border-l-4
+        {% if is_done %}border-emerald-400{% else %}border-slate-200{% endif %}">
+      <div class="p-4">
+        <div class="flex items-start gap-3">
+          {% if is_done %}
+            <span class="mt-1 w-6 h-6 inline-flex items-center justify-center rounded-full bg-emerald-100 text-emerald-700 shrink-0">✓</span>
+          {% else %}
+            <form method="post" action="/tasks/{{ t.id }}/done">
+              <button class="mt-1 w-6 h-6 inline-flex items-center justify-center rounded-full border border-slate-300 hover:bg-emerald-100 hover:border-emerald-400 transition shrink-0"
+                title="Mark done">○</button>
+            </form>
+          {% endif %}
+
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              {% if sub %}
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded text-sm"
+                  style="background: {{ sub.color }}20">{{ sub.icon or '📚' }}</span>
+              {% endif %}
+              <h4 class="font-medium {% if is_done %}line-through text-slate-400{% endif %}">{{ t.title }}</h4>
+              {% if is_done %}<span class="pill bg-emerald-100 text-emerald-700">done</span>{% endif %}
+              {% if t.recurrence_rule %}
+                {% set rrule_label = '🔁 daily' if t.recurrence_rule == 'DAILY' else '🔁 weekly' %}
+                <span class="pill bg-violet-50 text-violet-700" title="{{ t.recurrence_rule }}">{{ rrule_label }}</span>
+              {% endif %}
+              {% if t.notes %}<span class="pill bg-amber-50 text-amber-700">📝</span>{% endif %}
+              {% if tfiles %}<span class="pill bg-sky-50 text-sky-700">📎 {{ tfiles|length }}</span>{% endif %}
+            </div>
+            <div class="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+              {% if sub %}<span>{{ sub.name }}</span>{% endif %}
+              {% if t.topic_id %}
+                {% set topic = subjects | map(attribute='topics') | sum(start=[]) | selectattr('id', 'equalto', t.topic_id) | first %}
+                {% if topic %}<span>· {{ (topic.code + ' ') if topic.code else '' }}{{ topic.title }}</span>{% endif %}
+              {% endif %}
+              {% if t.scheduled_for %}<span>· 🕒 {{ t.scheduled_for.strftime("%a %d %b · %H:%M") }}</span>{% endif %}
+              <span>· {{ t.est_minutes }}m</span>
+              {% if not is_done %}<span>· {{ t.progress_pct }}% done</span>{% endif %}
+            </div>
+            {% if not is_done %}
+              <div class="mt-2 h-1.5 w-full bg-slate-100 rounded">
+                <div class="h-1.5 rounded bg-indigo-500" style="width: {{ t.progress_pct }}%"></div>
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="flex items-center gap-1 shrink-0">
+            <details class="relative">
+              <summary class="px-2 py-1 text-xs rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer list-none">Edit ▾</summary>
+            </details>
+            <form method="post" action="/tasks/{{ t.id }}/delete">
+              <button onclick="return confirm('Delete this task? This cannot be undone.');"
+                class="p-1.5 rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete">✕</button>
+            </form>
+          </div>
+        </div>
+
+        <details class="mt-3" {% if t.notes or tfiles %}open{% endif %}>
+          <summary class="text-xs text-indigo-600 cursor-pointer select-none hover:text-indigo-700">
+            📝 Edit · notes · attachments
+          </summary>
+
+          <div class="mt-3 grid md:grid-cols-2 gap-3">
+            <!-- Edit + notes -->
+            <form method="post" action="/tasks/{{ t.id }}/edit" class="bg-slate-50 rounded-lg p-3 space-y-2 text-xs">
+              <input name="title" value="{{ t.title }}" placeholder="Title"
+                class="w-full border bg-white rounded px-2 py-1" />
+              <div class="flex gap-2">
+                <select name="subject_id" class="flex-1 border bg-white rounded px-2 py-1 task-subject"
+                  data-task-id="{{ t.id }}">
+                  <option value="">— No subject —</option>
+                  {% for s in subjects %}
+                    <option value="{{ s.id }}" {% if t.subject_id == s.id %}selected{% endif %}>
+                      {{ s.icon or '📚' }} {{ s.name }}
+                    </option>
+                  {% endfor %}
+                </select>
+                <select name="topic_id" class="flex-1 border bg-white rounded px-2 py-1 task-topic"
+                  id="task-topic-{{ t.id }}">
+                  <option value="" {% if not t.topic_id %}selected{% endif %}>— No topic —</option>
+                  {% if t.subject_id %}
+                    {% for tp in (topics_by_subject.get(t.subject_id, []) if topics_by_subject is defined else []) %}
+                      <option value="{{ tp.id }}" {% if t.topic_id == tp.id %}selected{% endif %}>{{ tp.label }}</option>
+                    {% endfor %}
+                  {% endif %}
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <input type="date" name="scheduled_date"
+                  value="{{ t.scheduled_for.date().isoformat() if t.scheduled_for else '' }}"
+                  class="flex-1 border bg-white rounded px-2 py-1" />
+                <input type="time" name="scheduled_time"
+                  value="{{ t.scheduled_for.strftime('%H:%M') if t.scheduled_for else '' }}"
+                  class="w-24 border bg-white rounded px-2 py-1" />
+                <input type="number" name="est_minutes" value="{{ t.est_minutes }}" min="5" max="240"
+                  class="w-20 border bg-white rounded px-2 py-1" />
+              </div>
+              <textarea name="notes_text" rows="3" placeholder="Notes (the AI Coach can search these)…"
+                class="w-full border bg-white rounded px-2 py-1">{{ t.notes }}</textarea>
+              <div class="flex justify-end">
+                <button class="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
+              </div>
+            </form>
+
+            <!-- Attachments -->
+            <div class="bg-slate-50 rounded-lg p-3">
+              <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5 font-medium">Attachments</div>
+              {% if tfiles %}
+                <ul class="space-y-1.5 mb-2 text-xs">
+                  {% for f in tfiles %}
+                    {% set kind = f.mime.split('/')[0] %}
+                    {% set fname = f.filename | lower %}
+                    {% set is_pdf = (f.mime == 'application/pdf') or fname.endswith('.pdf') %}
+                    {% set is_image = kind == 'image' %}
+                    {% set ico = '📄' %}
+                    {% if is_pdf %}{% set ico = '📕' %}{% endif %}
+                    {% if is_image %}{% set ico = '🖼️' %}{% endif %}
+                    <li class="flex items-center gap-2 bg-white border rounded px-2 py-1">
+                      <span class="text-base">{{ ico }}</span>
+                      <span class="flex-1 truncate" title="{{ f.filename }}">{{ f.filename }}</span>
+                      {% if f.extracted_text %}
+                        <span class="pill bg-emerald-50 text-emerald-700">text</span>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="text-xs text-slate-400 italic mb-2">No files yet.</div>
+              {% endif %}
+              <form method="post" action="/tasks/{{ t.id }}/upload" enctype="multipart/form-data"
+                    class="flex flex-wrap items-center gap-2 text-xs border-t pt-2">
+                <input type="file" name="file" required class="text-xs" />
+                <button class="px-2 py-1 bg-slate-700 text-white rounded">Upload</button>
+                <span class="text-slate-400 text-[11px]">PDF/image/text · OCR via Claude when set</span>
+              </form>
+            </div>
+          </div>
+        </details>
+      </div>
+    </li>
+  {% endfor %}
+</ul>
+
+<script>
+  // When subject changes inside an edit panel, refresh that panel's topic list.
+  window.__topicsBySubject = window.__topicsBySubject || {{ (topics_by_subject if topics_by_subject is defined else {}) | tojson }};
+  document.querySelectorAll('select.task-subject').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const tid = this.dataset.taskId;
+      const topicEl = document.getElementById('task-topic-' + tid);
+      if (!topicEl) return;
+      const sid = this.value;
+      topicEl.innerHTML = '';
+      topicEl.appendChild(new Option('— No topic —', ''));
+      const topics = window.__topicsBySubject[sid] || [];
+      topics.forEach(t => topicEl.appendChild(new Option(t.label, t.id)));
+    });
+  });
+</script>
+{% endblock %}
