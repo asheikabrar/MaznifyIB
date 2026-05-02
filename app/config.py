@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-3.5"  # supported free models: claude-3.5, claude-instant-1, claude-4-mini
     database_url: str = "sqlite:///./studymate.db"
     app_timezone: str = "Asia/Dubai"
+    upload_dir: str = "uploads"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -18,8 +19,17 @@ from app.models import NoteFile, Subject, Topic
 from app.ai import get_anthropic_model, get_anthropic_model_candidates
 
 settings = get_settings()
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+def _get_upload_dir() -> Path:
+    upload_dir = Path(settings.upload_dir)
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        return upload_dir
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "studymate-uploads"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 def save_upload(
@@ -31,7 +41,8 @@ def save_upload(
     topic_id: int | None = None,
 ) -> NoteFile:
     safe = filename.replace("/", "_").replace("\\", "_")
-    path = UPLOAD_DIR / f"{int.from_bytes(os.urandom(4), 'big'):08x}_{safe}"
+    upload_dir = _get_upload_dir()
+    path = upload_dir / f"{int.from_bytes(os.urandom(4), 'big'):08x}_{safe}"
     path.write_bytes(data)
 
     extracted = _try_extract_text(path, mime, data)
