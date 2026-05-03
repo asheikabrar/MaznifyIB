@@ -398,14 +398,23 @@ def subject_detail(subject_id: int, request: Request, db: Session = Depends(get_
     if not subject:
         raise HTTPException(404)
 
-    # Only this user's topics for this subject
+    # Only this user's topics for this subject. Load them as a flat list, then
+    # build the parent/child tree in Python so we do not trigger many lazy-load
+    # queries while rendering the nested curriculum structure.
     user_topics = list(
         db.scalars(
             select(Topic)
             .where(Topic.subject_id == subject_id)
             .where(Topic.owner_id == uid)
+            .order_by(Topic.parent_id, Topic.code, Topic.title)
         )
     )
+    topics_by_parent: dict[int | None, list[Topic]] = {}
+    for t in user_topics:
+        topics_by_parent.setdefault(t.parent_id, []).append(t)
+    for t in user_topics:
+        t.children = topics_by_parent.get(t.id, [])
+
     topic_ids = [t.id for t in user_topics]
 
     files_by_topic: dict[int, list[NoteFile]] = {}
