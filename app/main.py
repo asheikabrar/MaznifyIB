@@ -439,15 +439,19 @@ def subject_detail(subject_id: int, request: Request, db: Session = Depends(get_
 
     topic_last_rating: dict[int, str] = {}
     if topic_ids:
-        latest = db.scalars(
-            select(StudySession)
+        latest_session_ids = db.scalars(
+            select(func.max(StudySession.id))
             .where(StudySession.owner_id == uid)
             .where(StudySession.topic_id.in_(topic_ids))
-            .order_by(StudySession.id.desc())
+            .group_by(StudySession.topic_id)
         ).all()
-        for s in latest:
-            if s.topic_id not in topic_last_rating and s.rating:
-                topic_last_rating[s.topic_id] = s.rating
+        if latest_session_ids:
+            for s in db.scalars(
+                select(StudySession)
+                .where(StudySession.id.in_(latest_session_ids))
+            ).all():
+                if s.rating and s.topic_id is not None:
+                    topic_last_rating[s.topic_id] = s.rating
 
     ctx = _common_ctx(request, db)
     ctx["subject"] = subject

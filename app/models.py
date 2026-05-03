@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -36,11 +37,14 @@ class Subject(Base):
 
 class Topic(Base):
     __tablename__ = "topics"
+    __table_args__ = (
+        Index("ix_topics_subject_owner", "subject_id", "owner_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"))
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
     code: Mapped[str] = mapped_column(String(40), default="")  # e.g. "2.3"
     title: Mapped[str] = mapped_column(String(200))
     notes: Mapped[str] = mapped_column(Text, default="")  # student's own notes
@@ -93,10 +97,13 @@ class Task(Base):
 
 class Deadline(Base):
     __tablename__ = "deadlines"
+    __table_args__ = (
+        Index("ix_deadlines_subject_owner", "subject_id", "owner_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True)
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True, index=True)
     topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(40))  # IA / EE / TOK / Mock / Test
     title: Mapped[str] = mapped_column(String(200))
@@ -130,10 +137,13 @@ class AvailabilityException(Base):
 
 class StudySession(Base):
     __tablename__ = "study_sessions"
+    __table_args__ = (
+        Index("ix_study_sessions_topic_owner", "topic_id", "owner_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
+    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     minutes: Mapped[int] = mapped_column(Integer, default=0)
     rating: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # again/hard/good/easy
@@ -143,11 +153,14 @@ class StudySession(Base):
 
 class NoteFile(Base):
     __tablename__ = "note_files"
+    __table_args__ = (
+        Index("ix_note_files_subject_topic", "subject_id", "topic_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True)
-    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True, index=True)
+    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
     task_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tasks.id"), nullable=True)
     filename: Mapped[str] = mapped_column(String(300))
     mime: Mapped[str] = mapped_column(String(100))
