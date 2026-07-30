@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import os
 import secrets
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Request
@@ -21,16 +22,37 @@ from app.models import User
 
 PBKDF2_ITER = 200_000
 SESSION_COOKIE = "studymate_session"
-_settings = get_settings()
+
+
+def _secret_file_path() -> Path:
+    settings = get_settings()
+    secret_file = os.environ.get("STUDYMATE_SECRET_FILE") or settings.secret_file or ".studymate_secret"
+    path = Path(secret_file).expanduser()
+    if not path.is_absolute():
+        path = (Path(__file__).resolve().parent.parent / path).resolve()
+    return path
 
 
 def _secret() -> bytes:
-    """Use APP_SECRET if set; else derive a stable secret from the DB URL.
+    """Use an explicit secret when configured; otherwise persist a random one locally."""
+    secret = os.environ.get("APP_SECRET") or os.environ.get("STUDYMATE_APP_SECRET")
+    if secret:
+        return secret.encode("utf-8")
 
-    Good enough for a single-user / family deploy. For production set APP_SECRET.
-    """
-    s = os.environ.get("APP_SECRET") or _settings.database_url + "::studymate"
-    return s.encode("utf-8")
+    settings = get_settings()
+    if settings.app_secret:
+        return settings.app_secret.encode("utf-8")
+
+    secret_path = _secret_file_path()
+    if secret_path.exists():
+        existing = secret_path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing.encode("utf-8")
+
+    secret_value = secrets.token_urlsafe(48)
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    secret_path.write_text(secret_value, encoding="utf-8")
+    return secret_value.encode("utf-8")
 
 
 # ---------- password hashing ----------
@@ -97,21 +119,40 @@ def get_current_user(request: Request, db: Session) -> Optional[User]:
 
 # ---------- bootstrap ----------
 
+def _resolve_admin_credentials() -> tuple[str, str]:
+    settings = get_settings()
+    username = (
+        os.environ.get("STUDYMATE_ADMIN_USERNAME")
+        or settings.admin_username
+        or "admin"
+    ).strip() or "admin"
+    password = os.environ.get("STUDYMATE_ADMIN_PASSWORD") or settings.admin_password
+    if not password:
+        password = secrets.token_urlsafe(18)
+    return username, password
+
+
 def ensure_admin_user(db: Session) -> User:
-    """Make sure an admin/admin user exists (default credentials)."""
-    user = db.scalar(select(User).where(User.username == "admin"))
+    """Create a secure admin account if one does not already exist."""
+    username, password = _resolve_admin_credentials()
+    user = db.scalar(select(User).where(User.username == username))
     if user:
         return user
+
     user = User(
-        username="admin",
+        username=username,
         display_name="Administrator",
         email="",
-        password_hash=hash_password("admin"),
+        password_hash=hash_password(password),
         is_admin=True,
     )
     db.add(user)
     db.commit()
     provision_user_workspace(db, user)
+
+    if not os.environ.get("STUDYMATE_ADMIN_PASSWORD") and not get_settings().admin_password:
+        print(f"[INFO] Created admin user '{username}' with a random password: {password}")
+        print("[INFO] Save it somewhere safe before sharing the app.")
     return user
 
 

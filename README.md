@@ -10,7 +10,40 @@ A personal study companion for an IB DP1 student.
 - **Syllabus auto-import** — upload a syllabus PDF, tick "extract topics", and topics are added to the subject.
 - **AI Coach (Claude)** — chat that can create tasks, mark topics done, change availability, etc., via tool-calling.
 
-## Run locally (Windows / PowerShell)
+## Run locally (Recommended: Single-Click)
+
+### Windows
+👉 **Double-click `StudyMate.bat`** — that's it!
+
+### Mac/Linux
+```bash
+chmod +x install_mac.sh StudyMate.sh run_revision_desk.sh StudyMate.command
+./install_mac.sh
+./StudyMate.sh
+```
+
+For Finder-based launching on a Mac, you can also double-click [StudyMate.command](StudyMate.command). That opens Terminal and starts the app for you.
+
+The app will:
+1. Create a local virtual environment in `.venv`
+2. Install all Python dependencies from `requirements.txt`
+3. Initialize the database
+4. Start the server
+5. Open http://127.0.0.1:8000 automatically
+
+To open the revision desk directly, visit:
+- http://127.0.0.1:8000/revision-desk
+
+If you prefer to run just the revision desk server manually:
+```bash
+./run_revision_desk.sh
+```
+
+See [QUICK_START.md](QUICK_START.md) for more details and advanced options.
+
+---
+
+## Manual Setup (if you prefer)
 
 ```powershell
 cd C:\Users\ahame\studymate-dp1

@@ -1,0 +1,12 @@
+==================================================
+  StudyMate - Single Click Launcher
+==================================================
+
+[*] Starting StudyMate server...
+[OK] Server is ready
+
+[INFO] Opening http://127.0.0.1:8000...
+
+[OK] StudyMate is running!
+     Press Ctrl+C to stop the server
+

@@ -71,6 +71,17 @@ class Topic(Base):
     )
 
 
+class RevisionDeskState(Base):
+    __tablename__ = "revision_desk_states"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    owner: Mapped[Optional["User"]] = relationship(back_populates="revision_states")
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -205,3 +216,5 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     anthropic_api_key: Mapped[str] = mapped_column(String(300), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    revision_states: Mapped[list["RevisionDeskState"]] = relationship(back_populates="owner", cascade="all, delete-orphan")

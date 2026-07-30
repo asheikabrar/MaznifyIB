@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Maznify Revision Desk</title>
+<style>
+  :root{
+    --primary:#3F51B5;
+    --primary-dark:#303F9F;
+    --primary-tint:#EEF0FB;
+    --ink:#202124;
+    --paper:#F1F3F6;
+    --card:#FFFFFF;
+    --line:#E3E6EB;
+    --urgent:#D32F2F;
+    --due:#2E7D32;
+    --upcoming:#78828C;
+    --sans: "Segoe UI", Roboto, -apple-system, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans);
+    padding:24px 16px 80px; min-height:100vh;
+  }
+  .wrap{max-width:1200px; margin:0 auto;}
+
+  header{
+    background:linear-gradient(120deg, #2E2559 0%, #43305F 32%, #5A3450 62%, #6E3F42 100%);
+    color:#fff; border-radius:20px; padding:30px 30px 26px; margin-bottom:20px;
+    box-shadow:0 10px 26px rgba(46,37,89,.3), 0 4px 14px rgba(90,52,80,.22);
+    position:relative; overflow:hidden;
+  }
+  .header-deco{position:absolute; border-radius:50%; pointer-events:none;}
+  .deco-a{width:190px; height:190px; top:-70px; right:-40px; background:rgba(255,255,255,.08);}
+  .deco-b{width:130px; height:130px; bottom:-55px; right:90px; background:#C9992F; opacity:.16; filter:blur(2px);}
+  .deco-c{width:90px; height:90px; top:14px; left:56%; background:#2E8C86; opacity:.14; filter:blur(2px);}
+  .deco-d{width:60px; height:60px; bottom:10px; left:8%; background:#B5495B; opacity:.16; filter:blur(2px);}
+  header .header-inner{position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; text-align:center;}
+  .brand-row{display:flex; flex-direction:column; align-items:center; gap:8px; margin-bottom:4px;}
+  .logo-mark{flex-shrink:0; filter:drop-shadow(0 4px 10px rgba(0,0,0,.18)); margin-bottom:4px;}
+  header .eyebrow{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:rgba(255,255,255,.85); font-weight:700;}
+  header h1{margin:2px 0 0; font-size:34px; font-weight:800; letter-spacing:-.02em; color:#fff; text-shadow:0 2px 10px rgba(0,0,0,.12);}
+  .accent-bar{height:4px; width:64px; border-radius:2px; margin-top:14px; background:linear-gradient(90deg,#C9992F,#B5495B,#2E8C86); position:relative; z-index:1;}
+
+  .stats{display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; justify-content:center; position:relative; z-index:1;}
+  .stat-pill{
+    font-size:11.5px; background:rgba(255,255,255,.18); color:#fff; border:1px solid rgba(255,255,255,.28);
+    border-radius:20px; padding:8px 16px; font-weight:500; backdrop-filter:blur(2px);
+  }
+  .stat-pill b{font-size:16px; margin-right:5px; font-weight:700;}
+
+  .info-panel{background:var(--card); border-radius:12px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 1px 4px rgba(0,0,0,.06);}
+  .info-panel summary{cursor:pointer; padding:14px 20px; font-weight:600; font-size:13.5px; color:var(--primary); list-style:none; display:flex; align-items:center; gap:8px;}
+  .info-panel summary::-webkit-details-marker{display:none;}
+  .info-panel summary::before{content:"ⓘ"; font-size:15px;}
+  .info-panel .info-body{padding:0 20px 18px; font-size:13px; color:#3c4043; line-height:1.65;}
+  .info-panel .info-body ul{margin:6px 0 12px; padding-left:20px;}
+  .info-panel .info-body li{margin-bottom:4px;}
+  .info-panel .info-body p{margin:0 0 10px;}
+
+  .section-label{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--upcoming); margin-bottom:10px;}
+
+  .queue-empty{font-size:13px; color:#5f6368; font-style:italic; padding:16px 4px;}
+
+  .tabs{display:flex; gap:8px; flex-wrap:wrap; row-gap:8px; margin-bottom:18px;}
+  .tab{
+    font-size:12px; font-weight:600; padding:9px 16px 9px 12px; white-space:nowrap; cursor:pointer;
+    border:1px solid var(--line); border-radius:24px;
+    background:var(--card); color:var(--ink); display:flex; align-items:center; gap:7px;
+    box-shadow:0 1px 2px rgba(0,0,0,.04); transition:box-shadow .15s, transform .1s;
+  }
+  .tab:hover{box-shadow:0 2px 6px rgba(0,0,0,.1); transform:translateY(-1px);}
+  .tab .tab-dot{width:8px; height:8px; border-radius:50%; flex-shrink:0;}
+  .manage-row{display:flex; gap:10px; margin-bottom:30px; flex-wrap:wrap;}
+  .manage-row input{
+    flex:1; min-width:180px; font-size:14px; padding:10px 14px; border:1px solid var(--line);
+    border-radius:8px; background:var(--card);
+  }
+  .manage-row input:focus{outline:none; border-color:var(--primary);}
+  .default-check{display:flex; align-items:center; gap:6px; font-size:12px; color:#5f6368; white-space:nowrap;}
+  .default-check input{width:auto;}
+  .search-row{margin-bottom:14px;}
+  .search-row input{
+    width:100%; font-size:14px; padding:10px 14px; border:1px solid var(--line);
+    border-radius:8px; background:var(--card); box-sizing:border-box;
+  }
+  .search-row input:focus{outline:none; border-color:var(--primary);}
+  .hint{font-size:12px; color:#5f6368; margin:0 0 18px; line-height:1.6;}
+
+  .empty-state{text-align:center; padding:40px 20px; color:#5f6368; font-size:13px; background:var(--card); border-radius:12px;}
+  .empty-state .big{font-size:15px; font-weight:600; color:var(--ink); margin-bottom:6px;}
+
+  button{
+    font-family:var(--sans); font-size:12.5px; font-weight:600;
+    border:1px solid var(--line); background:var(--card); color:var(--ink);
+    padding:9px 16px; border-radius:20px; cursor:pointer; transition:box-shadow .15s, background .15s;
+  }
+  button:hover{background:#F5F6F8; box-shadow:0 1px 3px rgba(0,0,0,.1);}
+  button.primary{background:var(--primary); color:#fff; border-color:var(--primary); box-shadow:0 1px 2px rgba(0,0,0,.15);}
+  button.primary:hover{background:var(--primary-dark); border-color:var(--primary-dark);}
+  button.ghost{border-color:var(--line); color:#5f6368; font-size:11.5px; background:transparent;}
+  button.small{padding:5px 11px; font-size:11px;}
+  .log-btn{
+    background:var(--due); color:#fff; border:none; border-radius:16px;
+    padding:5px 10px; font-size:10.5px; font-weight:700; cursor:pointer;
+    box-shadow:0 1px 3px rgba(46,125,50,.4); white-space:nowrap;
+  }
+  .log-btn:hover{background:#256b28; box-shadow:0 2px 5px rgba(46,125,50,.5);}
+
+  .priority-tag{font-size:9.5px; font-weight:700; background:var(--urgent); color:#fff; padding:2px 8px; border-radius:10px; text-transform:uppercase; letter-spacing:.03em;}
+
+  .add-row{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+  .add-row input, .add-row select{
+    font-family:var(--sans); font-size:13px; padding:9px 12px; border:1px solid var(--line);
+    border-radius:8px; background:var(--card);
+  }
+  .add-row input[type=text]{flex:1; min-width:160px;}
+
+  .subject-panel{background:var(--card); border-radius:12px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 1px 4px rgba(0,0,0,.06); margin-bottom:12px;}
+
+  .table-wrap{margin-bottom:4px; border-radius:10px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 1px 4px rgba(0,0,0,.06);}
+  table.chapter-table{width:100%; border-collapse:collapse; table-layout:fixed; background:var(--card);}
+  .chapter-table th{
+    font-size:9.5px; text-transform:uppercase; letter-spacing:.04em; font-weight:700;
+    color:var(--upcoming); text-align:left; padding:10px 6px; border-bottom:1px solid var(--line);
+    overflow:hidden; white-space:nowrap; background:#FAFAFB;
+  }
+  .chapter-table td{padding:7px 6px; border-bottom:1px solid var(--line); font-size:11.5px; vertical-align:middle; overflow:hidden;}
+  .chapter-table tr:last-child td{border-bottom:none;}
+  .chapter-table tr.ia-row td{background:#FAFAFB;}
+  .ch-name{font-weight:600; font-size:12px; word-break:break-word;}
+  .ch-subject{font-weight:600; font-size:9.5px; margin-top:2px;}
+  .chapter-table select, .chapter-table input[type=date], .chapter-table input[type=text]{
+    font-family:var(--sans); font-size:10.5px; padding:4px 3px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; width:100%; min-width:0; box-sizing:border-box;
+  }
+  .mono-cell{font-size:10px;}
+  .next-review-cell{display:flex; align-items:center; gap:3px; flex-wrap:wrap;}
+
+  .modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(32,33,36,0.5);
+    align-items:center; justify-content:center; z-index:1000; padding:20px;
+  }
+  .modal-box{
+    background:var(--card); border-radius:12px; padding:22px;
+    max-width:360px; width:min(92vw, 360px); box-shadow:0 4px 16px rgba(0,0,0,.25);
+  }
+  .flashcards-modal-box{max-width:760px; width:min(92vw, 760px);}
+  .modal-box p{font-size:13.5px; margin:0 0 18px; color:var(--ink); line-height:1.5;}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end;}
+
+  .toast{
+    display:none; position:fixed; top:16px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:#fff; padding:11px 20px; border-radius:8px;
+    font-size:12.5px; z-index:1001; box-shadow:0 4px 12px rgba(0,0,0,.25);
+    max-width:90%; text-align:center;
+  }
+  .save-indicator{
+    display:none; position:fixed; bottom:0; left:0; right:0; align-items:center; justify-content:center; gap:9px;
+    background:var(--urgent); color:#fff; padding:12px 16px;
+    font-size:13px; font-weight:700; z-index:1002; box-shadow:0 -4px 16px rgba(0,0,0,.25);
+  }
+  .save-dot{width:8px; height:8px; border-radius:50%; background:#fff; animation:savePulse 1s infinite;}
+  @keyframes savePulse{0%,100%{opacity:1;} 50%{opacity:.25;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="header-deco deco-a"></div>
+    <div class="header-deco deco-b"></div>
+    <div class="header-deco deco-c"></div>
+    <div class="header-deco deco-d"></div>
+    <div class="header-inner">
+      <div class="brand-row">
+        <svg width="88" height="88" viewBox="0 0 46 46" fill="none" xmlns="http://www.w3.org/2000/svg" class="logo-mark">
+          <defs>
+            <linearGradient id="pulseGrad" x1="4" y1="0" x2="42" y2="0" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#C9992F"/>
+              <stop offset="0.5" stop-color="#B5495B"/>
+              <stop offset="1" stop-color="#4FA8D8"/>
+            </linearGradient>
+          </defs>
+          <rect width="46" height="46" rx="14" fill="rgba(255,255,255,0.24)"/>
+          <path d="M6 28 L13 28 L16 14 L20 37 L24 16 L28 32 L32 28 L38 28"
+            stroke="url(#pulseGrad)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="38" cy="28" r="2.6" fill="#4FA8D8"/>
+        </svg>
+        <div class="eyebrow">IB · Spaced Revision Tracker</div>
+        <h1>Maznify</h1>
+      </div>
+      <div class="accent-bar"></div>
+      <div class="stats">
+        <span class="stat-pill"><b id="statTotal">0</b>chapters filed</span>
+        <span class="stat-pill"><b id="statDue">0</b>due now</span>
+        <span class="stat-pill"><b id="statSubjects">0</b>subjects</span>
+      </div>
+    </div>
+  </header>
+
+  <details class="info-panel">
+    <summary>How spaced revision works</summary>
+    <div class="info-body">
+      <p><strong>Every chapter has a Proficient rating</strong> — Hard, OK, or Easy — and that's what decides when it comes back around for review:</p>
+      <ul>
+        <li><strong>Hard</strong> — back in 2 days</li>
+        <li><strong>OK</strong> — same gap as last time</li>
+        <li><strong>Easy</strong> — gap grows (2 → 4 → 7 → 14 → 30 days)</li>
+      </ul>
+      <p><strong>Studying a preloaded chapter for real?</strong> Click Edit and set "Last revised" to the actual date you studied it — no need to add it as a new chapter.</p>
+      <p>Every date field is directly editable too, if you'd rather override the schedule yourself.</p>
+      <p><strong>Flashcards:</strong> paste links to Quizlet, Anki, Google Drive docs, or your own HTML flashcard apps. <strong>Tests:</strong> log your last test date and set your next one to track practice exams alongside revision.</p>
+      <p>"Load subjects" only adds subjects/chapters that aren't there yet, and brings back any default subjects or chapters you've hidden — it never touches or resets anything you've already studied or edited. Removing a default subject or chapter hides it rather than deleting it, so you can bring it back anytime; custom ones you added yourself delete fully.</p>
+      <p><strong>Search</strong> the bar above the tabs looks across every subject at once. <strong>Time spent:</strong> click Edit on a chapter, enter minutes, and hit "Log time" — it adds up so you can see total time invested per chapter.</p>
+      <p><strong>Backup/Restore:</strong> "⬇ Backup" downloads a JSON file with everything in the app. Keep it somewhere safe (email it to yourself, save it to Drive). If anything ever seems to have reset, click "⬆ Restore" and pick that file to bring it all back.</p>
+      <p><strong>In the Today queue:</strong> every field (flashcard link, test dates, time logged) saves itself the moment you change it — that part is automatic. <strong>Save</strong> just closes the edit view, keeping whatever you changed, without marking the chapter as reviewed. <strong>✓ Done</strong> is the one that matters for scheduling — it takes your Hard/OK/Easy pick, marks the chapter reviewed today, reschedules its next revision, and removes it from today's list. Use Save if you edited something but aren't finished studying it yet; use Done only once you've actually reviewed it.</p>
+    </div>
+  </details>
+
+  <div class="manage-row">
+    <input type="text" id="newSubjectName" placeholder="Add a subject (e.g. Biology HL)">
+    <label class="default-check">
+      <input type="checkbox" id="newSubjectDefault"> Treat as default
+    </label>
+    <button class="primary" onclick="addSubject()">Add subject</button>
+    <button onclick="loadSubjects()">Load subjects</button>
+    <button onclick="exportBackup()">⬇ Backup</button>
+    <button onclick="triggerImport()">⬆ Restore</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none;" onchange="handleImportFile(this)">
+  </div>
+  <div id="disabledList"></div>
+
+  <div class="search-row">
+    <input type="text" id="searchInput" placeholder="🔍 Search chapters across all subjects…" oninput="handleSearch(this.value)">
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="tabContent"></div>
+</div>
+
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal-box">
+    <p id="confirmMessage"></p>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeConfirm()">Cancel</button>
+      <button class="primary" onclick="confirmYes()">Delete</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="flashcardsModal">
+  <div class="modal-box flashcards-modal-box">
+    <h2 id="flashcardsTitle" style="font-size:16px; margin:0 0 12px;">Flashcards</h2>
+    <div id="flashcardsContent" style="font-size:13px; color:#2c2c2c; line-height:1.5; white-space:pre-wrap; max-height:320px; overflow:auto; padding:10px; background:#f7f7f7; border-radius:10px; border:1px solid #e3e6eb;"></div>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeFlashcards()">Close</button>
+      <button class="primary" onclick="copyFlashcards()">Copy</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div id="saveIndicator" class="save-indicator"><span class="save-dot"></span>Saving — don't refresh yet…</div>
+
+<script>
+const API_STATE = '/revision-desk/state';
+const INTERVALS = [2, 4, 7, 14, 30]; // days per box level (0-indexed, 5 levels)
+let data = { subjects: [] };
+let loaded = false;
+let activeTab = 'today';
+
+const TAB_COLORS = [
+  '#3F51B5', // indigo
+  '#E64A19', // deep orange
+  '#00796B', // teal
+  '#7B1FA2', // purple
+  '#1976D2', // blue
+  '#C2185B', // pink
+  '#388E3C', // green
+  '#5D4037'  // brown
+];
+function getSubjectColor(sid){
+  const idx = data.subjects.findIndex(s => s.id === sid);
+  return TAB_COLORS[idx % TAB_COLORS.length];
+}
+function hexToRgba(hex, alpha){
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function shortLabel(name){
+  let n = name.replace(/\b(HL|SL|AA)\b/gi, '').replace(/\s+/g, ' ').trim();
+  if(n.length > 14){
+    const words = n.split(' ');
+    let out = '';
+    for(const w of words){
+      const candidate = (out ? out + ' ' : '') + w;
+      if(candidate.length > 14) break;
+      out = candidate;
+    }
+    n = out || n.slice(0, 14);
+  }
+  return n;
+}
+
+function todayStr(){
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());
+}
+function addDays(dateStr, n){
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0,10);
+}
+function daysBetween(a,b){
+  return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000);
+}
+function uid(){ return Math.random().toString(36).slice(2,9); }
+
+let pendingConfirmAction = null;
+function showConfirm(message, onConfirm){
+  pendingConfirmAction = onConfirm;
+  document.getElementById('confirmMessage').textContent = message;
+  document.getElementById('confirmModal').style.display = 'flex';
+}
+function closeConfirm(){
+  document.getElementById('confirmModal').style.display = 'none';
+  pendingConfirmAction = null;
+}
+function confirmYes(){
+  if(pendingConfirmAction) pendingConfirmAction();
+  closeConfirm();
+}
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>{ t.style.display = 'none'; }, 4500);
+}
+
+async function loadFromStorage(){
+  for(let attempt=0; attempt<3; attempt++){
+    try{
+      const res = await fetch(API_STATE, { cache: 'no-store' });
+      if(!res.ok) throw new Error('load failed');
+      const json = await res.json();
+      return { value: JSON.stringify(json.state) };
+    }catch(e){
+      console.error('load failed (attempt '+(attempt+1)+')', e);
+      if(attempt<2) await new Promise(r=>setTimeout(r,700));
+    }
+  }
+  return null;
+}
+
+async function load(){
+  const res = await loadFromStorage();
+  if(res && res.value){
+    try{ data = JSON.parse(res.value); }catch(e){ console.error('corrupt saved data', e); }
+  }
+  const beforeCount = data.subjects.length;
+  data.subjects = data.subjects.filter(s => !['ia','internal assessment'].includes(s.name.trim().toLowerCase()));
+  let dueDateCleared = 0;
+  data.subjects.forEach(s => {
+    s.chapters.forEach(c => {
+      if(!c.lastReviewed && c.dueDate){
+        c.dueDate = '';
+        dueDateCleared++;
+      }
+    });
+  });
+  let taggedCount = 0;
+  data.subjects.forEach(s => {
+    if(s.isDefault === undefined){
+      s.isDefault = STARTER_DATA.some(g => matchesGroup(s.name, g));
+      taggedCount++;
+    }
+    if(s.disabled === undefined){ s.disabled = false; taggedCount++; }
+    const group = STARTER_DATA.find(g => matchesGroup(s.name, g));
+    s.chapters.forEach(c => {
+      if(c.isDefault === undefined){
+        c.isDefault = !!(group && group.chapters.some(chName => chName.toLowerCase() === c.name.toLowerCase()));
+        taggedCount++;
+      }
+      if(c.disabled === undefined){ c.disabled = false; taggedCount++; }
+      if(c.totalMinutes === undefined){ c.totalMinutes = 0; taggedCount++; }
+      if(c.lastDuration === undefined){ c.lastDuration = 0; taggedCount++; }
+      if(!Array.isArray(c.revisionHistory)){ c.revisionHistory = []; taggedCount++; }
+      if(typeof c.currentRevisionMinutes !== 'number'){ c.currentRevisionMinutes = 0; taggedCount++; }
+    });
+  });
+  const seeded = seedStarterChapters();
+  if(data.subjects.length !== beforeCount || seeded > 0 || dueDateCleared > 0 || taggedCount > 0){ save(); }
+  loaded = true;
+  render();
+}
+
+let saveInFlight = 0;
+function updateSaveIndicator(){
+  const el = document.getElementById('saveIndicator');
+  if(!el) return;
+  el.style.display = saveInFlight > 0 ? 'flex' : 'none';
+}
+window.addEventListener('beforeunload', function(e){
+  if(saveInFlight > 0){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+async function save(){
+  saveInFlight++;
+  updateSaveIndicator();
+  try{
+    for(let attempt=0; attempt<2; attempt++){
+      try{
+        const result = await fetch(API_STATE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        if(result.ok) return true;
+        throw new Error('save failed');
+      }catch(e){
+        console.error('save failed (attempt '+(attempt+1)+')', e);
+        if(attempt===0) await new Promise(r=>setTimeout(r,600));
+      }
+    }
+    return false;
+  } finally {
+    saveInFlight--;
+    updateSaveIndicator();
+  }
+}
+
+function addSubject(){
+  const input = document.getElementById('newSubjectName');
+  const defaultCheckbox = document.getElementById('newSubjectDefault');
+  const name = input.value.trim();
+  if(!name) return;
+  const lower = name.toLowerCase();
+  const autoPriority = ['bio','arabic','math'].some(k => lower.includes(k));
+  data.subjects.push({ id: uid(), name, priority: autoPriority, chapters: [], addingChapter:false, isDefault: defaultCheckbox.checked, disabled: false });
+  input.value = '';
+  defaultCheckbox.checked = false;
+  render();
+  save().then(ok => { if(!ok) showToast('Added, but saving failed — refresh could lose it. Try again in a moment.'); });
+}
+
+function removeSubject(sid){
+  const s = data.subjects.find(s=>s.id===sid);
+  if(!s) return;
+  if(s.isDefault){
+    showConfirm(`"${s.name}" is a default subject, so it'll be hidden rather than deleted — nothing about it is lost, and you can bring it back anytime with "Load subjects". Continue?`, () => {
+      s.disabled = true;
+      if(activeTab === sid) activeTab = 'today';
+      save(); render();
+    });
+  } else {
+    showConfirm(`Remove "${s.name}" and all ${s.chapters.length} chapters filed under it? This can't be undone.`, () => {
+      data.subjects = data.subjects.filter(s => s.id !== sid);
+      if(activeTab === sid) activeTab = 'today';
+      save(); render();
+    });
+  }
+}
+
+function enableSubject(sid){
+  const s = data.subjects.find(s=>s.id===sid);
+  if(!s) return;
+  s.disabled = false;
+  save(); render();
+}
+
+function toggleChapterPriority(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  c.priority = !c.priority;
+  save(); render();
+}
+
+function toggleAddChapter(sid){
+  const s = data.subjects.find(s=>s.id===sid);
+  s.addingChapter = !s.addingChapter;
+  render();
+}
+
+function addChapter(sid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const nameInput = document.getElementById('chname-'+sid);
+  const agoSelect = document.getElementById('chago-'+sid);
+  const name = nameInput.value.trim();
+  if(!name) return;
+  const daysAgo = parseInt(agoSelect.value, 10);
+  const today = todayStr();
+  const lastReviewed = addDays(today, -daysAgo);
+  const dueDate = addDays(lastReviewed, INTERVALS[0]);
+  s.chapters.push({
+    id: uid(), name, box: 0, lastReviewed, dueDate, lastProficiency: '', flashcards: '', lastTestDate: '', nextTestDate: '', priority: !!s.priority, isDefault:false, disabled:false, totalMinutes: 0, lastDuration: 0, revisionHistory: [], currentRevisionMinutes: 0
+  });
+  s.addingChapter = false;
+  render();
+  save().then(ok => { if(!ok) showToast('Added, but saving failed — refresh could lose it. Try again in a moment.'); });
+}
+
+function toggleAddIA(sid){
+  const s = data.subjects.find(s=>s.id===sid);
+  s.addingIA = !s.addingIA;
+  render();
+}
+
+function addIAChapter(sid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const nameInput = document.getElementById('ianame-'+sid);
+  const agoSelect = document.getElementById('iaago-'+sid);
+  let name = nameInput.value.trim();
+  if(!name) return;
+  if(!/^IA:/i.test(name)) name = 'IA: ' + name;
+  const daysAgo = parseInt(agoSelect.value, 10);
+  const today = todayStr();
+  const lastReviewed = addDays(today, -daysAgo);
+  const dueDate = addDays(lastReviewed, INTERVALS[0]);
+  s.chapters.push({
+    id: uid(), name, box: 0, lastReviewed, dueDate, lastProficiency: '', flashcards: '', lastTestDate: '', nextTestDate: '', priority: !!s.priority, isDefault:false, disabled:false, totalMinutes: 0, lastDuration: 0, revisionHistory: [], currentRevisionMinutes: 0
+  });
+  s.addingIA = false;
+  render();
+  save().then(ok => { if(!ok) showToast('Added, but saving failed — refresh could lose it. Try again in a moment.'); });
+}
+
+const STARTER_DATA = [
+  { keywords:['bio'], defaultName:'Biology HL', priority:true, chapters:[
+    'A1.1 Water','A1.2 Nucleic acids','A2.1 Origins of cells','A2.2 Cell structure','A2.3 Viruses',
+    'A3.1 Diversity of organisms','A3.2 Classification and cladistics','A4.1 Evolution and speciation','A4.2 Conservation of biodiversity',
+    'B1.1 Carbohydrates and lipids','B1.2 Proteins','B2.1 Membranes and membrane transport','B2.2 Organelles and compartmentalisation',
+    'B2.3 Cell specialisation','B3.1 Gas exchange','B3.2 Transport','B3.3 Muscle and motility','B4.1 Adaptation to environment','B4.2 Ecological niches',
+    'C1.1 Enzymes and metabolism','C1.2 Cell respiration','C1.3 Photosynthesis','C1.4 Chemiosmosis','C2.1 Chemical signalling',
+    'C2.2 Neural signalling','C3.1 Integration of body systems','C3.2 Defence against disease','C4.1 Populations and communities','C4.2 Transfer of energy and matter',
+    'D1.1 DNA replication','D1.2 Protein synthesis','D1.3 Mutation and gene editing','D2.1 Cell and nuclear division','D2.2 Gene expression',
+    'D2.3 Water potential','D3.1 Reproduction','D3.2 Inheritance','D3.3 Homeostasis','D4.1 Natural selection','D4.2 Stability and change','D4.3 Climate change',
+    'IA: Internal Assessment'
+  ]},
+  { keywords:['business'], defaultName:'Business Management HL', priority:false, chapters:[
+    '1.1 What is a business?','1.2 Types of business entities','1.3 Business objectives','1.4 Stakeholders','1.5 Growth and evolution','1.6 Multinational companies (MNCs)',
+    '2.1 Introduction to human resource management','2.2 Organizational structure','2.3 Leadership and management','2.4 Motivation and demotivation',
+    '2.5 Organizational culture (HL only)','2.6 Communication','2.7 Industrial/employee relations (HL only)',
+    '3.1 Introduction to finance','3.2 Sources of finance','3.3 Costs and revenues','3.4 Final accounts','3.5 Profitability and liquidity ratios',
+    '3.6 Cash flow','3.7 Investment appraisal','3.8 Efficiency ratios (HL only)','3.9 Budgets (HL only)',
+    '4.1 Introduction to marketing','4.2 Marketing planning','4.2 Market research','4.5 The four Ps',
+    '4.6 International marketing (HL only)','4.7 E-commerce (HL only)',
+    '5.1 Introduction to operations management','5.2 Operations methods','5.3 Lean production & quality management (HL only)','5.4 Location',
+    '5.5 Break-even analysis','5.6 Production planning (HL only)','5.7 Crisis & contingency planning (HL only)','5.8 Research and development (HL only)','5.9 Management information systems (HL only)',
+    'IA: Internal Assessment'
+  ]},
+  { keywords:['math'], defaultName:'Math AA SL', priority:true, chapters:[
+    'Number & Algebra: Sequences and series','Number & Algebra: Exponents and logarithms','Number & Algebra: Binomial theorem','Number & Algebra: Financial applications',
+    'Functions: Linear, quadratic & rational functions','Functions: Exponential & logarithmic functions','Functions: Transformations of graphs','Functions: Inverse functions',
+    'Geometry & Trig: Coordinate geometry and volumes','Geometry & Trig: Unit circle and identities','Geometry & Trig: Sine and cosine rules','Geometry & Trig: Trig equations and graphs',
+    'Statistics & Probability: Descriptive statistics','Statistics & Probability: Probability (Venn/tree/conditional)','Statistics & Probability: Binomial and normal distributions','Statistics & Probability: Correlation and regression',
+    'Calculus: Differentiation','Calculus: Integration','Calculus: Applications (optimisation & kinematics)',
+    'IA: Mathematical Exploration'
+  ]},
+  { keywords:['language','culture','arabic'], defaultName:'Language and Culture SL', priority:true, chapters:[
+    'Theme: Identities','Theme: Experiences','Theme: Human Ingenuity','Theme: Social Organization','Theme: Sharing the Planet',
+    'IA: Internal Assessment'
+  ]},
+  { keywords:['english'], defaultName:'English A Language and Literature HL', priority:false, chapters:[
+    'AOE 1: Readers, Writers and Texts','AOE 2: Time and Space','AOE 3: Intertextuality: Connecting Texts',
+    'Text study: Bowling for Columbine (satire & culture of fear)','Paper 1: Guided Textual Analysis skills','Paper 2: Comparative Essay skills',
+    'HL Essay preparation','Individual Oral preparation',
+    'IA: Internal Assessment'
+  ]},
+  { keywords:['visual','art'], defaultName:'Visual Arts', priority:false, chapters:[
+    'Component: Art-making Inquiries Portfolio','Component: Connections Study','Component: Resolved Body of Work',
+    'Home unit: experiments & artist research',
+    'IA: Internal Assessment'
+  ]},
+  { keywords:['tok','theory of knowledge'], defaultName:'TOK', priority:false, chapters:[
+    'TOK: Knowledge and the Knower','TOK: Areas of Knowledge','TOK: Ways of Knowing','TOK Exhibition','TOK Essay'
+  ]},
+  { keywords:['ucat'], defaultName:'UCAT', priority:false, chapters:[
+    'Verbal Reasoning practice','Decision Making practice','Quantitative Reasoning practice','Abstract Reasoning practice','Situational Judgement practice'
+  ]}
+];
+
+function matchesGroup(subjectName, group){
+  const lower = subjectName.toLowerCase().trim();
+  return group.keywords.some(k => lower.includes(k));
+}
+
+function runSeed(reenableDisabled){
+  let addedCount = 0;
+  let reenabledCount = 0;
+  STARTER_DATA.forEach(group => {
+    let subject = data.subjects.find(s => matchesGroup(s.name, group));
+    if(!subject){
+      subject = { id: uid(), name: group.defaultName, priority: !!group.priority, chapters: [], addingChapter:false, isDefault:true, disabled:false };
+      data.subjects.push(subject);
+      addedCount++;
+    } else if(subject.disabled && reenableDisabled){
+      subject.disabled = false;
+      reenabledCount++;
+    }
+    group.chapters.forEach(chName => {
+      const chapter = subject.chapters.find(c => c.name.toLowerCase() === chName.toLowerCase());
+      if(!chapter){
+        subject.chapters.push({ id: uid(), name: chName, box: 0, lastReviewed: '', dueDate: '', lastProficiency: '', flashcards: '', lastTestDate: '', nextTestDate: '', priority: !!subject.priority, isDefault:true, disabled:false, totalMinutes: 0, lastDuration: 0, revisionHistory: [], currentRevisionMinutes: 0 });
+        addedCount++;
+      } else if(chapter.disabled && reenableDisabled){
+        chapter.disabled = false;
+        reenabledCount++;
+      }
+    });
+  });
+  return { addedCount, reenabledCount };
+}
+
+function exportBackup(){
+  try{
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'maznify-backup-' + todayStr() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Backup downloaded — keep it somewhere safe.');
+  }catch(e){
+    console.error('export failed', e);
+    showToast('Backup failed — try again.');
+  }
+}
+
+function triggerImport(){
+  document.getElementById('importFile').click();
+}
+
+function handleImportFile(input){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    let parsed;
+    try{
+      parsed = JSON.parse(e.target.result);
+      if(!parsed || !Array.isArray(parsed.subjects)) throw new Error('bad shape');
+    }catch(err){
+      showToast('That file doesn\'t look like a valid Maznify backup.');
+      input.value = '';
+      return;
+    }
+    showConfirm(`Import this backup? It will replace everything currently in the app (${data.subjects.length} subjects) with the backup's contents (${parsed.subjects.length} subjects). This can't be undone.`, () => {
+      data = parsed;
+      save(); render();
+      showToast('Backup restored.');
+    });
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function seedStarterChapters(){
+  return runSeed(false).addedCount;
+}
+
+function loadSubjects(){
+  const { addedCount, reenabledCount } = runSeed(true);
+  save(); render();
+  const parts = [];
+  if(addedCount > 0) parts.push(`${addedCount} new item${addedCount>1?'s':''} added`);
+  if(reenabledCount > 0) parts.push(`${reenabledCount} hidden subject${reenabledCount>1?'s':''} brought back`);
+  showToast(parts.length ? parts.join(' · ') + '. Nothing you\'ve already studied or edited was touched.'
+    : `Everything's already loaded — nothing new to add.`);
+}
+
+function markReviewed(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  const reviewDate = todayStr();
+  c.box = Math.min(c.box + 1, INTERVALS.length - 1);
+  c.lastReviewed = reviewDate;
+  c.dueDate = addDays(c.lastReviewed, INTERVALS[c.box]);
+  c.lastProficiency = 'easy';
+  recordRevision(c, 'easy', reviewDate, c.dueDate, c.box);
+  save(); render();
+}
+
+function markStruggled(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  const reviewDate = todayStr();
+  c.box = 0;
+  c.lastReviewed = reviewDate;
+  c.dueDate = addDays(c.lastReviewed, INTERVALS[0]);
+  c.lastProficiency = 'hard';
+  recordRevision(c, 'hard', reviewDate, c.dueDate, c.box);
+  save(); render();
+}
+
+function setProficiency(sid, cid, level){
+  if(!level) return;
+  if(level === 'hard'){ markStruggled(sid, cid); return; }
+  if(level === 'easy'){ markReviewed(sid, cid); return; }
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  const reviewDate = todayStr();
+  c.lastReviewed = reviewDate;
+  c.dueDate = addDays(c.lastReviewed, INTERVALS[c.box]);
+  c.lastProficiency = 'ok';
+  recordRevision(c, 'ok', reviewDate, c.dueDate, c.box);
+  save(); render();
+}
+
+function confirmQueueItem(sid, cid){
+  const select = document.getElementById('profselect-'+cid);
+  const value = select ? select.value : '';
+  if(!value){
+    showToast('Pick Hard, OK, or Easy first, then tap ✓ Done.');
+    return;
+  }
+  editingRows.delete(cid);
+  setProficiency(sid, cid, value);
+}
+
+function setLastRevised(sid, cid, newDate){
+  if(!newDate) return;
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  c.lastReviewed = newDate;
+  save(); render();
+}
+
+function rescheduleChapter(sid, cid, newDate){
+  if(!newDate) return;
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  c.dueDate = newDate;
+  save(); render();
+}
+
+function normalizeAttachments(value){
+  if(Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+  if(typeof value === 'string') return value.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+  return [];
+}
+
+function renderAttachmentList(attachments){
+  const items = normalizeAttachments(attachments);
+  if(!items.length) return `<span style="color:${DIM};">–</span>`;
+  return items.slice(0, 3).map(att => {
+    const safe = escapeHtml(att);
+    const isLink = /^https?:\/\//i.test(att) || att.startsWith('/uploads/');
+    const label = att.startsWith('/uploads/') ? att.split('/').pop() : att;
+    return isLink
+      ? `<a href="${safe}" target="_blank" rel="noopener" style="display:block; font-size:10px; margin-bottom:3px; color:var(--primary); text-decoration:none;">${escapeHtml(label)}</a>`
+      : `<div style="font-size:10px; margin-bottom:3px;">${safe}</div>`;
+  }).join('') + (items.length > 3 ? `<div style="font-size:9px; color:${DIM};">+${items.length - 3} more</div>` : '');
+}
+
+async function uploadAttachment(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  if(!s) return;
+  const c = s.chapters.find(c=>c.id===cid);
+  if(!c) return;
+  const input = document.getElementById(`file-${cid}`);
+  const file = input && input.files && input.files[0];
+  if(!file){ showToast('Choose a file first.'); return; }
+  const formData = new FormData();
+  formData.append('file', file);
+  try{
+    const res = await fetch('/revision-desk/attachments/upload', { method:'POST', body: formData });
+    const text = await res.text();
+    let payload = null;
+    try { payload = text ? JSON.parse(text) : null; } catch (e) { payload = null; }
+    if(!res.ok || !payload?.ok) {
+      const detail = payload?.detail || payload?.message || payload?.error || text || 'upload failed';
+      throw new Error(detail);
+    }
+    c.attachments = [...normalizeAttachments(c.attachments), payload.attachment];
+    save(); render();
+    showToast(`Attached ${payload.filename || 'file'}`);
+  }catch(e){
+    console.error('upload failed', e);
+    showToast(`Attachment upload failed: ${e.message || 'Please try again.'}`);
+  } finally {
+    if(input) input.value = '';
+  }
+}
+
+function setFlashcardDetails(sid, cid, flashcardsValue, attachmentsValue){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  c.flashcards = flashcardsValue.trim();
+  c.attachments = normalizeAttachments(attachmentsValue);
+  save(); render();
+}
+
+function setLastTestDate(sid, cid, value){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  c.lastTestDate = value;
+  save(); render();
+}
+
+function setNextTestDate(sid, cid, value){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  c.nextTestDate = value;
+  save(); render();
+}
+
+function removeChapter(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  if(!c) return;
+  if(c.isDefault){
+    showConfirm(`"${c.name}" is a default chapter, so it'll be hidden rather than deleted — nothing about it is lost, and you can bring it back anytime with "Load subjects". Continue?`, () => {
+      c.disabled = true;
+      save(); render();
+    });
+  } else {
+    showConfirm(`Remove "${c.name}" from your revision list?`, () => {
+      s.chapters = s.chapters.filter(c=>c.id!==cid);
+      save(); render();
+    });
+  }
+}
+
+function enableChapter(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  const c = s.chapters.find(c=>c.id===cid);
+  if(!c) return;
+  c.disabled = false;
+  save(); render();
+}
+
+function logDuration(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  if(!s) return;
+  const c = s.chapters.find(c=>c.id===cid);
+  if(!c) return;
+  const input = document.getElementById('dur-'+cid);
+  if(!input){ showToast('Could not find the time field — try clicking Edit again.'); return; }
+  const mins = parseInt(input.value, 10);
+  if(!mins || mins <= 0){
+    showToast('Enter a number of minutes first, then click Log.');
+    return;
+  }
+  ensureChapterRevisionMeta(c);
+  c.totalMinutes = (c.totalMinutes || 0) + mins;
+  c.lastDuration = mins;
+  c.currentRevisionMinutes = (c.currentRevisionMinutes || 0) + mins;
+  input.value = '';
+  save().then(ok => {
+    if(!ok) showToast('Logged locally, but saving failed — try again if it doesn\'t stick after reload.');
+    else showToast(`Logged ${mins}m for this review cycle — it will be attached the next time you mark "Done" on "${c.name}".`);
+  });
+  render();
+}
+
+let editingRows = new Set();
+function toggleEditRow(cid){
+  if(editingRows.has(cid)) editingRows.delete(cid); else editingRows.add(cid);
+  render();
+}
+
+let searchQuery = '';
+function handleSearch(v){
+  searchQuery = v.trim().toLowerCase();
+  render();
+}
+
+function setTab(tab){
+  activeTab = tab;
+  searchQuery = '';
+  const searchInput = document.getElementById('searchInput');
+  if(searchInput) searchInput.value = '';
+  render();
+}
+
+function formatDateDay(dateStr){
+  if(!dateStr) return 'Not yet';
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+}
+
+function statusColor(dueDate, isBacklog){
+  if(!dueDate) return '#c8ccd1';
+  const diff = daysBetween(todayStr(), dueDate);
+  if(diff < 0) return 'var(--urgent)';
+  if(diff === 0) return isBacklog ? 'var(--urgent)' : 'var(--due)';
+  return 'var(--upcoming)';
+}
+function statusLabel(dueDate, isBacklog){
+  if(!dueDate) return 'Not scheduled yet — study it once to set the schedule';
+  const diff = daysBetween(todayStr(), dueDate);
+  if(diff < 0) return 'Overdue';
+  if(diff === 0) return isBacklog ? 'Catch-up due' : 'Due today';
+  return `in ${diff}d`;
+}
+
+function ensureChapterRevisionMeta(c){
+  if(!c) return;
+  if(!Array.isArray(c.revisionHistory)) c.revisionHistory = [];
+  if(typeof c.currentRevisionMinutes !== 'number') c.currentRevisionMinutes = 0;
+  if(typeof c.totalMinutes !== 'number') c.totalMinutes = 0;
+  if(typeof c.lastDuration !== 'number') c.lastDuration = 0;
+}
+
+function getAverageRevisionMinutes(c){
+  ensureChapterRevisionMeta(c);
+  if(!c.revisionHistory.length) return Math.max(c.lastDuration || 0, 15);
+  const sum = c.revisionHistory.reduce((acc, entry) => acc + (entry.minutes || 0), 0);
+  return Math.max(10, Math.round(sum / c.revisionHistory.length));
+}
+
+function getSuggestedRevisionMinutes(c){
+  const avg = getAverageRevisionMinutes(c);
+  const factor = c.lastProficiency === 'hard' ? 1.25 : c.lastProficiency === 'easy' ? 0.9 : 1;
+  return Math.max(10, Math.min(90, Math.round(avg * factor)));
+}
+
+function formatRevisionHistory(c){
+  ensureChapterRevisionMeta(c);
+  if(!c.revisionHistory.length) return '';
+  return c.revisionHistory.slice(-3).reverse().map(entry => `${formatDateDay(entry.reviewedAt)} · ${entry.minutes || 0}m`).join(' • ');
+}
+
+function recordRevision(c, proficiency, reviewedDate, dueDate, boxIndex){
+  ensureChapterRevisionMeta(c);
+  c.revisionHistory.push({
+    reviewedAt: reviewedDate,
+    minutes: Math.max(0, c.currentRevisionMinutes || 0),
+    proficiency,
+    box: boxIndex,
+    dueDate,
+  });
+  c.lastProficiency = proficiency || c.lastProficiency || '';
+  c.lastReviewed = reviewedDate;
+  c.dueDate = dueDate;
+  c.box = boxIndex;
+  c.currentRevisionMinutes = 0;
+}
+
+function escapeHtml(value){
+  if(!value) return '';
+  return value.replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function openFlashcards(sid, cid){
+  const s = data.subjects.find(s=>s.id===sid);
+  if(!s) return;
+  const c = s.chapters.find(c=>c.id===cid);
+  if(!c) return;
+  const fc = (c.flashcards || '').trim();
+  if(!fc){ showToast('No flashcards are stored for this chapter yet.'); return; }
+  if(/^https?:\/\//i.test(fc)){
+    window.open(fc, '_blank', 'noopener');
+    return;
+  }
+  const content = document.getElementById('flashcardsContent');
+  const title = document.getElementById('flashcardsTitle');
+  title.textContent = `Flashcards — ${c.name}`;
+  content.innerHTML = escapeHtml(fc).replace(/\n/g, '<br>');
+  document.getElementById('flashcardsModal').style.display = 'flex';
+}
+
+function closeFlashcards(){
+  document.getElementById('flashcardsModal').style.display = 'none';
+}
+
+function copyFlashcards(){
+  const content = document.getElementById('flashcardsContent').innerText;
+  navigator.clipboard.writeText(content).then(() => showToast('Flashcards copied to clipboard.'), () => showToast('Copy failed. Try again manually.'));
+}
+
+function renderTabs(){
+  const tabsEl = document.getElementById('tabs');
+  const todayActive = activeTab==='today';
+  const todayStyle = todayActive
+    ? `background:var(--ink); color:#fff; border-color:var(--ink);`
+    : '';
+  let html = `<div class="tab" style="${todayStyle}" onclick="setTab('today')"><span class="tab-dot" style="background:${todayActive?'#fff':'var(--ink)'};"></span>Today</div>`;
+  data.subjects.forEach(s=>{
+    if(s.disabled) return;
+    const color = getSubjectColor(s.id);
+    const isActive = activeTab === s.id;
+    const style = isActive
+      ? `background:${color}; border-color:${color}; color:#fff; box-shadow:0 2px 8px ${hexToRgba(color,0.35)};`
+      : `border-color:${hexToRgba(color,0.4)};`;
+    const dotColor = isActive ? '#fff' : color;
+    const label = shortLabel(s.name);
+    html += `<div class="tab" style="${style}" title="${s.name}" onclick="setTab('${s.id}')"><span class="tab-dot" style="background:${dotColor};"></span>${label} <span class="tab-count">${s.chapters.length}</span></div>`;
+  });
+  tabsEl.innerHTML = html;
+}
+
+function renderDisabledList(){
+  const el = document.getElementById('disabledList');
+  if(!el) return;
+  const disabled = data.subjects.filter(s => s.disabled);
+  if(disabled.length === 0){ el.innerHTML = ''; return; }
+  el.innerHTML = `<p style="font-size:12px; color:#5f6368; margin:0 0 16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <span>Hidden:</span>
+    ${disabled.map(s => `<button class="small ghost" onclick="enableSubject('${s.id}')">+ ${shortLabel(s.name)}</button>`).join('')}
+  </p>`;
+}
+
+const PROF_COLORS = { hard:'var(--urgent)', ok:'var(--upcoming)', easy:'var(--due)' };
+const PROF_LABELS = { hard:'Hard', ok:'OK', easy:'Easy' };
+const DIM = '#c8ccd1';
+
+function renderChapterRow(s, c, showSubject){
+  const prof = c.lastProficiency || '';
+  const fc = c.flashcards || '';
+  const attachments = normalizeAttachments(c.attachments);
+  const isLink = /^https?:\/\//i.test(fc);
+  const lastTest = c.lastTestDate || '';
+  const nextTest = c.nextTestDate || '';
+  const isIA = c.name.startsWith('IA:');
+  const editing = editingRows.has(c.id);
+  const totalMin = c.totalMinutes || 0;
+  ensureChapterRevisionMeta(c);
+  const avgMin = getAverageRevisionMinutes(c);
+  const suggestedMin = getSuggestedRevisionMinutes(c);
+  const historyHint = formatRevisionHistory(c);
+  const currentSessionMin = c.currentRevisionMinutes || 0;
+
+  const nameCell = `
+    <td class="ch-name">
+      <span onclick="toggleChapterPriority('${s.id}','${c.id}')" title="${c.priority?'Priority — click to unflag':'Click to flag as priority'}" style="cursor:pointer; color:${c.priority?'var(--urgent)':DIM};">★</span>
+      ${c.name}${showSubject ? `<div class="ch-subject" style="color:${getSubjectColor(s.id)};" title="${s.name}">${shortLabel(s.name)}</div>` : ''}
+    </td>`;
+
+  if(!editing){
+    const timeCell = totalMin > 0
+      ? `<span style="font-weight:600;">${totalMin}m</span>${c.lastDuration ? `<div style="font-size:9px; color:${DIM};">last ${c.lastDuration}m</div>` : ''}<div style="font-size:9px; color:${DIM};">avg ${avgMin}m · next ${suggestedMin}m</div>${historyHint ? `<div style="font-size:8px; color:${DIM}; margin-top:2px;">${historyHint}</div>` : ''}`
+      : `<span style="color:${DIM};">–</span><div style="font-size:9px; color:${DIM};">next ${suggestedMin}m</div>`;
+    const flashcardsCell = fc
+      ? (isLink ? `<a href="${fc}" target="_blank" rel="noopener" style="font-size:10.5px; display:block; margin-bottom:4px;">Link ↗</a><button class="small primary" style="padding:4px 8px;" onclick="openFlashcards('${s.id}','${c.id}')">Open</button>` : `<div style="font-size:10.5px; margin-bottom:4px;">${escapeHtml(fc).slice(0, 100)}${fc.length>100?'…':''}</div><button class="small primary" style="padding:4px 8px;" onclick="openFlashcards('${s.id}','${c.id}')">Open</button>`)
+      : `<span style="color:${DIM};">–</span>`;
+    const attachmentCell = attachments.length
+      ? `<div style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line);">${renderAttachmentList(attachments)}</div>`
+      : '';
+    return `
+      <tr class="${isIA ? 'ia-row' : ''}">
+        ${nameCell}
+        <td>${prof ? `<span style="color:${PROF_COLORS[prof]}; font-weight:700;">${PROF_LABELS[prof]}</span>` : `<span style="color:${DIM};">–</span>`}</td>
+        <td class="mono-cell">${formatDateDay(c.lastReviewed)}</td>
+        <td class="mono-cell"><span style="color:${statusColor(c.dueDate, c.box===0)};">●</span> ${formatDateDay(c.dueDate)}</td>
+        <td>${flashcardsCell}${attachmentCell}</td>
+        <td class="mono-cell">${lastTest ? formatDateDay(lastTest) : `<span style="color:${DIM};">–</span>`}</td>
+        <td class="mono-cell">${nextTest ? formatDateDay(nextTest) : `<span style="color:${DIM};">–</span>`}</td>
+        <td class="mono-cell">${timeCell}</td>
+        <td style="white-space:nowrap;"><button class="small ghost" onclick="toggleEditRow('${c.id}')">Edit</button></td>
+      </tr>
+    `;
+  }
+
+  return `
+    <tr class="${isIA ? 'ia-row' : ''}" style="background:var(--primary-tint);">
+      ${nameCell}
+      <td>
+        <select id="profselect-${c.id}" ${showSubject ? '' : `onchange="setProficiency('${s.id}','${c.id}', this.value)"`}>
+          <option value="" ${prof===''?'selected':''}>–</option>
+          <option value="hard" ${prof==='hard'?'selected':''}>Hard</option>
+          <option value="ok" ${prof==='ok'?'selected':''}>OK</option>
+          <option value="easy" ${prof==='easy'?'selected':''}>Easy</option>
+        </select>
+      </td>
+      <td class="mono-cell">
+        <input type="date" value="${c.lastReviewed}" onchange="setLastRevised('${s.id}','${c.id}', this.value)">
+      </td>
+      <td class="mono-cell">
+        <input type="date" value="${c.dueDate}" title="${statusLabel(c.dueDate, c.box===0)}"
+          style="border-left:3px solid ${statusColor(c.dueDate, c.box===0)};"
+          onchange="rescheduleChapter('${s.id}','${c.id}', this.value)">
+      </td>
+      <td>
+        <textarea id="flashcards-${c.id}" placeholder="Paste a Quizlet/Anki/Drive link, or enter text." rows="6" style="width:100%; min-width:0; min-height:110px; resize:vertical; box-sizing:border-box; font-family:var(--sans); font-size:12px; line-height:1.4; padding:8px; border:1px solid var(--line); border-radius:6px;">${escapeHtml(fc)}</textarea>
+        <div style="font-size:10px; color:${DIM}; margin:8px 0 3px;">Attachments</div>
+        <textarea id="attachments-${c.id}" placeholder="Paste links or file names, one per line." rows="3" style="width:100%; min-width:0; resize:vertical; box-sizing:border-box; font-family:var(--sans); font-size:11px; line-height:1.4; padding:8px; border:1px solid var(--line); border-radius:6px;">${escapeHtml(attachments.join('\n'))}</textarea>
+        <input type="file" id="file-${c.id}" style="margin-top:6px; width:100%; font-size:10px;" />
+        <button class="small ghost" style="margin-top:6px; width:100%;" onclick="uploadAttachment('${s.id}','${c.id}')">Attach file</button>
+        <button class="small ghost" style="margin-top:6px; width:100%;" onclick="setFlashcardDetails('${s.id}','${c.id}', document.getElementById('flashcards-${c.id}').value, document.getElementById('attachments-${c.id}').value)">Save flashcards</button>
+      </td>
+      <td class="mono-cell">
+        <input type="date" value="${lastTest}" onchange="setLastTestDate('${s.id}','${c.id}', this.value)">
+      </td>
+      <td class="mono-cell">
+        <input type="date" value="${nextTest}" onchange="setNextTestDate('${s.id}','${c.id}', this.value)">
+      </td>
+      <td class="mono-cell">
+        ${totalMin > 0 ? `<div style="font-size:9px; margin-bottom:3px;">${totalMin}m total</div>` : ''}
+        <div style="font-size:9px; color:${DIM}; margin-bottom:4px;">This review: ${currentSessionMin}m</div>
+        <div style="font-size:9px; color:${DIM}; margin-bottom:4px;">Next: ${suggestedMin}m</div>
+        ${historyHint ? `<div style="font-size:8px; color:${DIM}; margin-bottom:5px;">${historyHint}</div>` : ''}
+        <div style="display:flex; flex-direction:column; align-items:stretch; gap:4px;">
+          <input type="number" id="dur-${c.id}" placeholder="e.g. 15" min="1" style="width:100%; box-sizing:border-box; padding:4px 4px; font-size:11px;">
+          <button class="log-btn" onclick="logDuration('${s.id}','${c.id}')" style="width:100%;">⏱ Log</button>
+        </div>
+      </td>
+      <td>
+        <div style="display:flex; flex-direction:column; align-items:stretch; gap:4px;">
+          ${showSubject ? `<button class="log-btn" onclick="confirmQueueItem('${s.id}','${c.id}')" title="Marks this reviewed using your Hard/OK/Easy pick, and reschedules it">✓ Done</button><button class="small ghost" onclick="toggleEditRow('${c.id}')" title="Keeps any changes you made, but doesn't mark this reviewed">Save</button>` : `<button class="small primary" onclick="toggleEditRow('${c.id}')">Save</button>`}
+          <button class="small ghost" onclick="removeChapter('${s.id}','${c.id}')" style="padding:3px 6px; font-size:10px;">✕</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function chapterTable(rowsHtml){
+  return `<div class="table-wrap"><table class="chapter-table">
+    <colgroup>
+      <col style="width:15%"><col style="width:6%"><col style="width:8%"><col style="width:9%">
+      <col style="width:8%"><col style="width:7%"><col style="width:7%"><col style="width:9%"><col style="width:12%">
+    </colgroup>
+    <thead><tr><th>Chapter</th><th>Prof.</th><th>Last revised</th><th>Next revision</th><th>Flashcards</th><th>Last test</th><th>Next test</th><th>Time</th><th></th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table></div>`;
+}
+
+function renderQueueHtml(){
+  const today = todayStr();
+  if(data.subjects.length === 0){
+    return '<div class="section-label">Today\'s queue</div><div class="empty-state"><div class="big">No subjects yet</div>Add one above, then load the demo or file in chapters yourself.</div>';
+  }
+  let allDue = [];
+  data.subjects.forEach(s=>{
+    if(s.disabled) return;
+    s.chapters.forEach(c=>{
+      if(c.disabled) return;
+      if(c.dueDate && daysBetween(today, c.dueDate) <= 0){
+        const overdueBy = daysBetween(c.dueDate, today);
+        const isBacklog = c.box === 0 && overdueBy > 0;
+        allDue.push({subject:s, chapter:c, isBacklog, overdueBy});
+      }
+    });
+  });
+  allDue.sort((a,b)=>{
+    if(a.chapter.priority !== b.chapter.priority) return a.chapter.priority ? -1 : 1;
+    return b.overdueBy - a.overdueBy;
+  });
+
+  const cap = 6;
+  const shown = allDue.slice(0, cap);
+  const rest = allDue.length - shown.length;
+
+  let html = '<div class="section-label">Today\'s queue</div>';
+  if(allDue.length === 0){
+    return html + '<div class="queue-empty">Nothing due. Check a subject tab to file in more chapters.</div>';
+  }
+  html += chapterTable(shown.map(item => renderChapterRow(item.subject, item.chapter, true)).join(''));
+  if(rest > 0) html += `<div class="queue-empty">+ ${rest} more due — work through today\'s list first, they\'ll carry forward.</div>`;
+  return html;
+}
+
+function renderSubjectHtml(s){
+  const color = getSubjectColor(s.id);
+  let html = `<div class="subject-panel">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:8px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:160px; font-size:16px; font-weight:700; color:${color};">${s.name}</div>
+      <div style="display:flex; gap:6px;">
+        <button class="small ghost" onclick="removeSubject('${s.id}')">Remove subject</button>
+      </div>
+    </div>
+  `;
+  const mainChapters = s.chapters.filter(c => !c.name.startsWith('IA:') && !c.disabled);
+  const iaChapters = s.chapters.filter(c => c.name.startsWith('IA:') && !c.disabled);
+  const hiddenChapters = s.chapters.filter(c => c.disabled);
+
+  if(mainChapters.length === 0){
+    html += '<div class="queue-empty">No chapters filed yet.</div>';
+  } else {
+    html += chapterTable(mainChapters.map(c => renderChapterRow(s, c, false)).join(''));
+  }
+
+  if(hiddenChapters.length > 0){
+    html += `<p style="font-size:12px; color:#5f6368; margin:6px 0 4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <span>Hidden chapters:</span>
+      ${hiddenChapters.map(c => `<button class="small ghost" onclick="enableChapter('${s.id}','${c.id}')">+ ${c.name.length>22?c.name.slice(0,22)+'…':c.name}</button>`).join('')}
+    </p>`;
+  }
+
+  html += `<div style="margin-top:24px; padding-top:16px; border-top:2px dashed var(--line);">
+    <div class="section-label" style="color:${color};">Internal Assessment (IA) — tracked separately</div>
+    ${iaChapters.length > 0 ? chapterTable(iaChapters.map(c => renderChapterRow(s, c, false)).join('')) : '<div class="queue-empty">No IA milestones filed yet.</div>'}
+    ${s.addingIA ? `
+      <div class="add-row">
+        <input type="text" id="ianame-${s.id}" placeholder="IA milestone (e.g. Draft submission)">
+        <select id="iaago-${s.id}">
+          <option value="0">Today</option>
+          <option value="3">A few days ago</option>
+          <option value="7" selected>About a week ago</option>
+          <option value="14">About 2 weeks ago</option>
+          <option value="30">About a month ago</option>
+        </select>
+        <button class="primary" onclick="addIAChapter('${s.id}')">File in</button>
+        <button class="ghost" onclick="toggleAddIA('${s.id}')">Cancel</button>
+      </div>
+    ` : `<div class="add-row"><button onclick="toggleAddIA('${s.id}')">+ Add IA milestone</button></div>`}
+  </div>`;
+  html += s.addingChapter ? `
+    <div class="add-row">
+      <input type="text" id="chname-${s.id}" placeholder="Chapter / topic name">
+      <select id="chago-${s.id}">
+        <option value="0">Finished today</option>
+        <option value="3">A few days ago</option>
+        <option value="7" selected>About a week ago</option>
+        <option value="14">About 2 weeks ago</option>
+        <option value="30">About a month ago</option>
+        <option value="60">Longer ago</option>
+      </select>
+      <button class="primary" onclick="addChapter('${s.id}')">File in</button>
+      <button class="ghost" onclick="toggleAddChapter('${s.id}')">Cancel</button>
+    </div>
+` : `<div class="add-row"><button onclick="toggleAddChapter('${s.id}')">+ Add chapter</button></div>`;
+  html += '</div>';
+  return html;
+}
+
+function renderSearchResults(){
+  let matches = [];
+  data.subjects.forEach(s=>{
+    if(s.disabled) return;
+    s.chapters.forEach(c=>{
+      if(c.disabled) return;
+      if(c.name.toLowerCase().includes(searchQuery) || s.name.toLowerCase().includes(searchQuery)){
+        matches.push({subject:s, chapter:c});
+      }
+    });
+  });
+  let html = `<div class="section-label">Search results for "${searchQuery}" (${matches.length})</div>`;
+  if(matches.length === 0){
+    return html + '<div class="queue-empty">No chapters match that search.</div>';
+  }
+  return html + chapterTable(matches.map(m => renderChapterRow(m.subject, m.chapter, true)).join(''));
+}
+
+function renderContent(){
+  const el = document.getElementById('tabContent');
+  if(searchQuery){
+    el.innerHTML = renderSearchResults();
+    return;
+  }
+  if(activeTab !== 'today'){
+    const s = data.subjects.find(s=>s.id===activeTab);
+    if(s && !s.disabled){ el.innerHTML = renderSubjectHtml(s); return; }
+    activeTab = 'today';
+  }
+  el.innerHTML = renderQueueHtml();
+}
+
+function renderStats(){
+  let total=0, due=0;
+  const today = todayStr();
+  const enabledSubjects = data.subjects.filter(s => !s.disabled);
+  enabledSubjects.forEach(s=>s.chapters.forEach(c=>{
+    if(c.disabled) return;
+    total++;
+    if(c.dueDate && daysBetween(today,c.dueDate) <= 0) due++;
+  }));
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statDue').textContent = due;
+  document.getElementById('statSubjects').textContent = enabledSubjects.length;
+}
+
+function render(){
+  if(!loaded) return;
+  try{
+    renderStats();
+    renderTabs();
+    renderDisabledList();
+    renderContent();
+  }catch(e){
+    console.error('render failed', e);
+    showToast('Something went wrong redrawing the page — your data is safe, but try refreshing.');
+  }
+}
+
+load();
+</script>
+</body>
+</html>
