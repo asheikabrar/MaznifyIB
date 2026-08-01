@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -18,8 +19,21 @@ from app.models import NoteFile, Subject, Topic
 from app.ai import get_anthropic_model, get_anthropic_model_candidates
 
 settings = get_settings()
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+def _resolve_upload_dir() -> Path:
+    env_path = os.getenv("UPLOAD_DIR")
+    upload_dir = Path(env_path) if env_path else Path("uploads")
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        return upload_dir
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "maznify_uploads"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+UPLOAD_DIR = _resolve_upload_dir()
 
 
 def save_upload(

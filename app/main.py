@@ -34,9 +34,8 @@ BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Maznify")
-UPLOADS_DIR = BASE_DIR / "uploads"
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+UPLOADS_DIR = notes.UPLOAD_DIR
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), name="uploads")
 
 
 @app.on_event("startup")
@@ -199,7 +198,7 @@ async def revision_desk_attachment_upload(request: Request, file: UploadFile = F
     uid = _uid(request)
     filename = Path(file.filename or "upload").name
     stored_filename = f"{uid}-{int(datetime.utcnow().timestamp() * 1000)}-{filename}"
-    dest_path = BASE_DIR / "uploads" / stored_filename
+    dest_path = notes.UPLOAD_DIR / stored_filename
     content = await file.read()
     dest_path.write_bytes(content)
     return {"ok": True, "filename": filename, "attachment": f"/uploads/{stored_filename}"}
