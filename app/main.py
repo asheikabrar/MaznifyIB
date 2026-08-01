@@ -1833,7 +1833,7 @@ def plan_view(request: Request, on: str = "", db: Session = Depends(get_db)):
 # ---------- auth: login / logout ----------
 
 @app.get("/login", response_class=HTMLResponse)
-def login_form(request: Request, next: str = "/revision-desk", error: str = "", db: Session = Depends(get_db)):
+def login_form(request: Request, next: str = "/", error: str = "", db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "login.html",
         {

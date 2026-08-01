@@ -22,6 +22,7 @@ class RevisionDeskFlashcardsTests(unittest.TestCase):
         self.assertIn("const ACTIVE_TAB_KEY", content)
         self.assertIn("localStorage.setItem(ACTIVE_TAB_KEY, tab)", content)
         self.assertIn("function setTab(tab)", content)
+        self.assertIn("/logout", content)
 
 
 if __name__ == "__main__":
