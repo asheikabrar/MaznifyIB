@@ -34,7 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Maznify")
-app.mount("/uploads", StaticFiles(directory=str(notes._get_upload_dir())), name="uploads")
+UPLOADS_DIR = BASE_DIR / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 
 @app.on_event("startup")
@@ -150,11 +152,119 @@ def _common_ctx(request: Request, db: Session) -> dict:
 
 
 # ---------- dashboard ----------
+ 
+@app.get("/revision-desk", response_class=HTMLResponse)
+def revision_desk(request: Request, db: Session = Depends(get_db)):
+    _uid(request)
+    ctx = _common_ctx(request, db)
+    return templates.TemplateResponse("revision_desk.html", ctx)
+
+
+@app.get("/revision-desk/state")
+def revision_desk_state(request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    row = db.scalar(select(RevisionDeskState).where(RevisionDeskState.owner_id == uid))
+    if row and row.state:
+        try:
+            state = json.loads(row.state)
+        except Exception:
+            state = {"subjects": []}
+    else:
+        state = {"subjects": []}
+    return {"state": state}
+
+
+@app.post("/revision-desk/state")
+async def save_revision_desk_state(request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    state = await request.json()
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=400, detail="Invalid state payload")
+    row = db.scalar(select(RevisionDeskState).where(RevisionDeskState.owner_id == uid))
+    if row:
+        row.state = json.dumps(state)
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(RevisionDeskState(
+            owner_id=uid,
+            state=json.dumps(state),
+            updated_at=datetime.utcnow(),
+        ))
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/revision-desk/attachments/upload")
+async def revision_desk_attachment_upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    uid = _uid(request)
+    filename = Path(file.filename or "upload").name
+    stored_filename = f"{uid}-{int(datetime.utcnow().timestamp() * 1000)}-{filename}"
+    dest_path = BASE_DIR / "uploads" / stored_filename
+    content = await file.read()
+    dest_path.write_bytes(content)
+    return {"ok": True, "filename": filename, "attachment": f"/uploads/{stored_filename}"}
+
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    _uid(request)
-    return RedirectResponse("/revision-desk", status_code=303)
+    uid = _uid(request)
+    plan = planner.build_plan(db, date.today(), user_id=uid)
+    deadlines = list(
+        db.scalars(
+            select(Deadline)
+            .where(Deadline.owner_id == uid)
+            .where(Deadline.due_date >= date.today())
+            .where(Deadline.progress_pct < 100)
+            .order_by(Deadline.due_date)
+            .limit(8)
+        )
+    )
+    # crude retention per subject — only count this user's topics
+    retention = []
+    user_topics_by_subject: dict[int, list[Topic]] = {}
+    for t in db.scalars(select(Topic).where(Topic.owner_id == uid)).all():
+        user_topics_by_subject.setdefault(t.subject_id, []).append(t)
+    for s in db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all():
+        my_topics = user_topics_by_subject.get(s.id, [])
+        in_revision = [t for t in my_topics if t.state]
+        total = len(my_topics)
+        if not in_revision:
+            retention.append({"subject": s, "pct": None, "studied": 0, "total": total})
+            continue
+        future = sum(1 for t in in_revision if t.due and t.due > datetime.utcnow())
+        pct = round(100 * future / len(in_revision))
+        retention.append({"subject": s, "pct": pct, "studied": len(in_revision), "total": total})
+
+    items_by_subject: dict[str, list] = {r["subject"].name: [] for r in retention}
+    items_by_subject["(no subject)"] = []
+    for item in plan.items:
+        key = item.subject_name or "(no subject)"
+        items_by_subject.setdefault(key, []).append(item)
+
+    topic_last_rating: dict[int, str] = {}
+    review_topic_ids = [i.topic_id for i in plan.items if i.kind == "review" and i.topic_id]
+    if review_topic_ids:
+        latest_sessions = db.scalars(
+            select(StudySession)
+            .where(StudySession.owner_id == uid)
+            .where(StudySession.topic_id.in_(review_topic_ids))
+            .order_by(StudySession.id.desc())
+        ).all()
+        for s in latest_sessions:
+            if s.topic_id not in topic_last_rating and s.rating:
+                topic_last_rating[s.topic_id] = s.rating
+
+    ctx = _common_ctx(request, db)
+    ctx.update(
+        {
+            "plan": plan,
+            "deadlines": deadlines,
+            "retention": retention,
+            "items_by_subject": items_by_subject,
+            "topic_last_rating": topic_last_rating,
+        }
+    )
+    return templates.TemplateResponse("dashboard.html", ctx)
 
 
 # ---------- summary dashboard ----------
@@ -345,23 +455,14 @@ def subject_detail(subject_id: int, request: Request, db: Session = Depends(get_
     if not subject:
         raise HTTPException(404)
 
-    # Only this user's topics for this subject. Load them as a flat list, then
-    # build the parent/child tree in Python so we do not trigger many lazy-load
-    # queries while rendering the nested curriculum structure.
+    # Only this user's topics for this subject
     user_topics = list(
         db.scalars(
             select(Topic)
             .where(Topic.subject_id == subject_id)
             .where(Topic.owner_id == uid)
-            .order_by(Topic.parent_id, Topic.code, Topic.title)
         )
     )
-    topics_by_parent: dict[int | None, list[Topic]] = {}
-    for t in user_topics:
-        topics_by_parent.setdefault(t.parent_id, []).append(t)
-    for t in user_topics:
-        t.children = topics_by_parent.get(t.id, [])
-
     topic_ids = [t.id for t in user_topics]
 
     files_by_topic: dict[int, list[NoteFile]] = {}
@@ -386,19 +487,15 @@ def subject_detail(subject_id: int, request: Request, db: Session = Depends(get_
 
     topic_last_rating: dict[int, str] = {}
     if topic_ids:
-        latest_session_ids = db.scalars(
-            select(func.max(StudySession.id))
+        latest = db.scalars(
+            select(StudySession)
             .where(StudySession.owner_id == uid)
             .where(StudySession.topic_id.in_(topic_ids))
-            .group_by(StudySession.topic_id)
+            .order_by(StudySession.id.desc())
         ).all()
-        if latest_session_ids:
-            for s in db.scalars(
-                select(StudySession)
-                .where(StudySession.id.in_(latest_session_ids))
-            ).all():
-                if s.rating and s.topic_id is not None:
-                    topic_last_rating[s.topic_id] = s.rating
+        for s in latest:
+            if s.topic_id not in topic_last_rating and s.rating:
+                topic_last_rating[s.topic_id] = s.rating
 
     ctx = _common_ctx(request, db)
     ctx["subject"] = subject
@@ -696,6 +793,117 @@ def review_topic_route(
     referer = request.headers.get("referer") or "/"
     sep = "&" if "?" in referer else "?"
     return RedirectResponse(f"{referer}{sep}celebrated=1", status_code=303)
+
+
+# ---------- topic history & test logging ----------
+
+@app.get("/topics/{topic_id}/history", response_class=HTMLResponse)
+def topic_history(
+    topic_id: int,
+    request: Request,
+    page: int = 1,
+    per_page: int = 100,
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    topic = db.get(Topic, topic_id)
+    if not topic or topic.owner_id != uid:
+        raise HTTPException(404)
+
+    page = max(1, page)
+    per_page = max(10, min(200, per_page))
+    offset = (page - 1) * per_page
+
+    base_filter = (
+        StudySession.owner_id == uid,
+        StudySession.topic_id == topic_id,
+    )
+
+    totals_stmt = select(
+        func.count(),
+        func.coalesce(func.sum(StudySession.minutes), 0),
+    ).where(*base_filter)
+    total_sessions, total_minutes = db.execute(totals_stmt).one()
+
+    sessions = list(
+        db.scalars(
+            select(StudySession)
+            .where(*base_filter)
+            .order_by(StudySession.started_at.desc())
+            .limit(per_page)
+            .offset(offset)
+        )
+    )
+
+    session_count = len(sessions)
+    rating_counts = {"again": 0, "hard": 0, "good": 0, "easy": 0}
+    for s in sessions:
+        if s.rating in rating_counts:
+            rating_counts[s.rating] += 1
+
+    intervals: list[int] = []
+    for i in range(session_count - 1):
+        later = sessions[i].started_at
+        prev = sessions[i + 1].started_at
+        try:
+            intervals.append(max(0, (later - prev).days))
+        except Exception:
+            pass
+    avg_interval = round(sum(intervals) / len(intervals), 1) if intervals else None
+
+    try:
+        threshold = int(topic.stability) if topic.stability else 7
+    except Exception:
+        threshold = 7
+    on_time_count = sum(1 for d in intervals if d <= threshold) if intervals else 0
+    on_time_pct = int(100 * on_time_count / len(intervals)) if intervals else None
+
+    page_count = (total_sessions + per_page - 1) // per_page if total_sessions else 1
+    showing_from = offset + 1 if total_sessions else 0
+    showing_to = offset + session_count
+
+    ctx = _common_ctx(request, db)
+    ctx.update({
+        "topic": topic,
+        "sessions": sessions,
+        "total_sessions": total_sessions,
+        "total_minutes": total_minutes,
+        "avg_interval": avg_interval,
+        "on_time_pct": on_time_pct,
+        "rating_counts": rating_counts,
+        "page": page,
+        "per_page": per_page,
+        "page_count": page_count,
+        "showing_from": showing_from,
+        "showing_to": showing_to,
+    })
+    return templates.TemplateResponse("topic_history.html", ctx)
+
+
+@app.post("/topics/{topic_id}/history")
+def log_test_score(
+    topic_id: int,
+    request: Request,
+    minutes: int = Form(0),
+    test_score: float | None = Form(None),
+    ib_score_type: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    topic = db.get(Topic, topic_id)
+    if not topic or topic.owner_id != uid:
+        raise HTTPException(404)
+    db.add(StudySession(
+        owner_id=uid,
+        topic_id=topic_id,
+        started_at=datetime.utcnow(),
+        minutes=int(minutes),
+        rating=None,
+        test_score=test_score,
+        ib_score_type=ib_score_type,
+    ))
+    db.commit()
+    return RedirectResponse(request.headers.get("referer") or f"/subjects/{topic.subject_id}", status_code=303)
 
 
 # ---------- tasks ----------
@@ -1621,73 +1829,6 @@ def plan_view(request: Request, on: str = "", db: Session = Depends(get_db)):
         }
     )
     return templates.TemplateResponse("plan.html", ctx)
-
-
-# ---------- revision desk ----------
-
-@app.get("/revision-desk", response_class=HTMLResponse)
-def revision_desk(request: Request, db: Session = Depends(get_db)):
-    _uid(request)
-    ctx = _common_ctx(request, db)
-    return templates.TemplateResponse("revision_desk.html", ctx)
-
-
-@app.get("/revision-desk/state")
-def revision_desk_state(request: Request, db: Session = Depends(get_db)):
-    uid = _uid(request)
-    state = db.scalar(
-        select(RevisionDeskState).where(RevisionDeskState.owner_id == uid).limit(1)
-    )
-    if state is None:
-        return {"state": {"subjects": []}}
-    try:
-        parsed = json.loads(state.data or "{}")
-    except ValueError:
-        parsed = {"subjects": []}
-    return {"state": parsed}
-
-
-@app.post("/revision-desk/state")
-async def revision_desk_state_save(request: Request, db: Session = Depends(get_db)):
-    uid = _uid(request)
-    payload = await request.json()
-    state = db.scalar(
-        select(RevisionDeskState).where(RevisionDeskState.owner_id == uid).limit(1)
-    )
-    serialized = json.dumps(payload)
-    if state is None:
-        state = RevisionDeskState(owner_id=uid, data=serialized, updated_at=datetime.utcnow())
-        db.add(state)
-    else:
-        state.data = serialized
-        state.updated_at = datetime.utcnow()
-    db.commit()
-    return {"ok": True}
-
-
-@app.post("/revision-desk/attachments/upload")
-async def revision_desk_attachment_upload(
-    request: Request,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    _uid(request)
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file selected")
-
-    data = await file.read()
-    stored = notes.save_upload(
-        db,
-        file.filename or "upload",
-        file.content_type or "application/octet-stream",
-        data,
-    )
-    filename = Path(stored.storage_path).name
-    return {
-        "ok": True,
-        "attachment": f"/uploads/{filename}",
-        "filename": file.filename,
-    }
 
 
 # ---------- auth: login / logout ----------

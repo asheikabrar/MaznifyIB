@@ -1,28 +1,9 @@
-from pathlib import Path
-
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
 
 settings = get_settings()
-
-
-def _ensure_sqlite_parent_dir(database_url: str) -> None:
-    if not database_url.startswith("sqlite") or database_url.startswith("sqlite:///:memory:"):
-        return
-
-    path_part = database_url.removeprefix("sqlite:///")
-    if not path_part or path_part == ":memory:":
-        return
-
-    db_path = Path(path_part)
-    if not db_path.is_absolute():
-        db_path = (Path.cwd() / db_path).resolve()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-
-_ensure_sqlite_parent_dir(settings.database_url)
 
 engine = create_engine(
     settings.database_url,
@@ -70,9 +51,20 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("availability_rules", "owner_id", "INTEGER NULL REFERENCES users(id)"),
     ("availability_exceptions", "owner_id", "INTEGER NULL REFERENCES users(id)"),
     ("study_sessions", "owner_id", "INTEGER NULL REFERENCES users(id)"),
+    ("study_sessions", "test_score", "REAL NULL"),
+    ("study_sessions", "ib_score_type", "VARCHAR(40) NULL"),
     ("note_files", "owner_id", "INTEGER NULL REFERENCES users(id)"),
     ("chat_messages", "owner_id", "INTEGER NULL REFERENCES users(id)"),
     ("chat_messages", "session_id", "INTEGER NULL REFERENCES chat_sessions(id)"),
+]
+
+
+_INDEXES: list[tuple[str, str, str]] = [
+    (
+        "study_sessions",
+        "ix_study_sessions_owner_topic_started",
+        "CREATE INDEX IF NOT EXISTS ix_study_sessions_owner_topic_started ON study_sessions(owner_id, topic_id, started_at)",
+    ),
 ]
 
 
@@ -97,6 +89,14 @@ def apply_lightweight_migrations() -> None:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
             if column == "owner_id" and table in _OWNER_TABLES:
                 newly_added_owner_id_tables.append(table)
+
+        for table, index_name, ddl in _INDEXES:
+            if table not in existing_tables:
+                continue
+            existing_index_names = {idx["name"] for idx in inspector.get_indexes(table)}
+            if index_name in existing_index_names:
+                continue
+            conn.execute(text(ddl))
 
     # Back-fill: any pre-existing rows now have NULL owner_id. Assign them
     # to the first admin user so the historical data continues to belong

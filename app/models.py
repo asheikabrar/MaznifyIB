@@ -8,7 +8,6 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
-    Index,
     Integer,
     String,
     Text,
@@ -37,14 +36,11 @@ class Subject(Base):
 
 class Topic(Base):
     __tablename__ = "topics"
-    __table_args__ = (
-        Index("ix_topics_subject_owner", "subject_id", "owner_id"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"))
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
     code: Mapped[str] = mapped_column(String(40), default="")  # e.g. "2.3"
     title: Mapped[str] = mapped_column(String(200))
     notes: Mapped[str] = mapped_column(Text, default="")  # student's own notes
@@ -69,17 +65,6 @@ class Topic(Base):
     children: Mapped[list["Topic"]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )
-
-
-class RevisionDeskState(Base):
-    __tablename__ = "revision_desk_states"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    data: Mapped[str] = mapped_column(Text, default="{}")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    owner: Mapped[Optional["User"]] = relationship(back_populates="revision_states")
 
 
 class Task(Base):
@@ -108,13 +93,10 @@ class Task(Base):
 
 class Deadline(Base):
     __tablename__ = "deadlines"
-    __table_args__ = (
-        Index("ix_deadlines_subject_owner", "subject_id", "owner_id"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True, index=True)
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True)
     topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(40))  # IA / EE / TOK / Mock / Test
     title: Mapped[str] = mapped_column(String(200))
@@ -148,36 +130,42 @@ class AvailabilityException(Base):
 
 class StudySession(Base):
     __tablename__ = "study_sessions"
-    __table_args__ = (
-        Index("ix_study_sessions_topic_owner", "topic_id", "owner_id"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
+    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     minutes: Mapped[int] = mapped_column(Integer, default=0)
     rating: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # again/hard/good/easy
+    # Optional test metadata (logged when the student records a test / exam result)
+    test_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ib_score_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
     topic: Mapped[Optional[Topic]] = relationship(back_populates="sessions")
 
 
 class NoteFile(Base):
     __tablename__ = "note_files"
-    __table_args__ = (
-        Index("ix_note_files_subject_topic", "subject_id", "topic_id"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True, index=True)
-    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True)
+    topic_id: Mapped[Optional[int]] = mapped_column(ForeignKey("topics.id"), nullable=True)
     task_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tasks.id"), nullable=True)
     filename: Mapped[str] = mapped_column(String(300))
     mime: Mapped[str] = mapped_column(String(100))
     storage_path: Mapped[str] = mapped_column(String(500))
     extracted_text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RevisionDeskState(Base):
+    __tablename__ = "revision_desk_states"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, unique=True, index=True)
+    state: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class ChatSession(Base):
@@ -216,5 +204,3 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     anthropic_api_key: Mapped[str] = mapped_column(String(300), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    revision_states: Mapped[list["RevisionDeskState"]] = relationship(back_populates="owner", cascade="all, delete-orphan")

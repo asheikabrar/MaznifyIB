@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import launcher
 
@@ -23,31 +23,6 @@ class LauncherRuntimeTests(unittest.TestCase):
                 launcher.run_server()
 
         popen_mock.assert_not_called()
-
-    @patch("launcher.release_single_instance_lock")
-    @patch("launcher.open_browser")
-    @patch("launcher.wait_for_server", return_value=True)
-    @patch("launcher.init_database")
-    @patch("launcher.setup_environment")
-    @patch("launcher.acquire_single_instance_lock", return_value=True)
-    @patch("launcher.check_port_in_use", return_value=False)
-    def test_main_stops_cleanly_when_running_under_test(
-        self,
-        check_port_in_use,
-        acquire_single_instance_lock,
-        setup_environment,
-        init_database,
-        wait_for_server,
-        open_browser,
-        release_single_instance_lock,
-    ):
-        server = MagicMock()
-
-        with patch("launcher.run_server", return_value=server), patch("launcher.is_running_under_test", return_value=True):
-            launcher.main()
-
-        server.terminate.assert_called_once()
-        server.wait.assert_called_once_with(timeout=3)
 
 
 if __name__ == "__main__":

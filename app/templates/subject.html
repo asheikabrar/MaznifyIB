@@ -118,6 +118,7 @@
                 title="Reset to not studied">↺</button>
             </form>
           {% endif %}
+          <a href="/topics/{{ t.id }}/history" class="ml-1 p-1.5 rounded-md text-slate-300 hover:bg-indigo-50 hover:text-indigo-700 opacity-0 group-hover:opacity-100 transition" title="History">📈</a>
           <form method="post" action="/topics/{{ t.id }}/delete">
             <button onclick="return confirm('Remove this topic and any sub-units? Review history will be deleted.');"
               class="ml-1 p-1.5 rounded-md text-slate-300 hover:bg-rose-50 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition"
