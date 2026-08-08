@@ -24,6 +24,15 @@ class RevisionDeskFlashcardsTests(unittest.TestCase):
         self.assertIn("function setTab(tab)", content)
         self.assertIn("/logout", content)
 
+    def test_login_template_allows_study_mate_or_revision_desk(self):
+        template_path = Path(__file__).resolve().parents[1] / "app" / "templates" / "login.html"
+        content = template_path.read_text(encoding="utf-8")
+
+        self.assertIn('name="next" value="{{ next }}"', content)
+        self.assertIn('onclick="setLoginNext(\'/\')"', content)
+        self.assertIn('onclick="setLoginNext(\'/revision-desk\')"', content)
+        self.assertIn('id="login-form"', content)
+
 
 if __name__ == "__main__":
     unittest.main()

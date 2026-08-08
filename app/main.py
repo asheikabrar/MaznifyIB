@@ -4,6 +4,8 @@ import json
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from urllib.parse import urlparse
+
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -417,6 +419,14 @@ def dashboard_summary(request: Request, db: Session = Depends(get_db)):
         "overrides_grouped": overrides_grouped,
     })
     return templates.TemplateResponse("dashboard_summary.html", ctx)
+
+
+@app.get("/choose", response_class=HTMLResponse)
+def choose_after_login(request: Request, db: Session = Depends(get_db)):
+    """Simple landing page allowing the signed-in user to choose Study Mate or Revision Desk."""
+    _uid(request)  # ensure user is authenticated; middleware will redirect to login otherwise
+    ctx = _common_ctx(request, db)
+    return templates.TemplateResponse("choose.html", ctx)
 
 
 # ---------- subjects + topics ----------
@@ -1848,6 +1858,16 @@ def login_form(request: Request, next: str = "/", error: str = "", db: Session =
     )
 
 
+def _is_safe_next(next_path: str) -> bool:
+    if not next_path or not next_path.startswith("/") or next_path.startswith("//"):
+        return False
+    try:
+        parsed = urlparse(next_path)
+    except Exception:
+        return False
+    return parsed.scheme == "" and parsed.netloc == ""
+
+
 @app.post("/login")
 def login_submit(
     request: Request,
@@ -1862,14 +1882,21 @@ def login_submit(
             f"/login?error=Invalid+username+or+password&next={next}", status_code=303
         )
     token = auth.make_session_token(user.id)
-    safe_next = next if next.startswith("/") else "/"
-    resp = RedirectResponse(safe_next, status_code=303)
+    # If the caller provided a safe path other than the generic '/', go there.
+    # Otherwise redirect to a choice landing page so the student can pick Study Mate or Revision Desk.
+    if _is_safe_next(next) and next != "/":
+        final = next
+    else:
+        final = "/choose"
+    resp = RedirectResponse(final, status_code=303)
     resp.set_cookie(
         auth.SESSION_COOKIE,
         token,
         httponly=True,
         samesite="lax",
         max_age=60 * 60 * 24 * 30,
+        secure=(request.url.scheme == "https"),
+        path="/",
     )
     return resp
 
