@@ -435,7 +435,7 @@ function showToast(msg){
 async function loadFromStorage(){
   for(let attempt=0; attempt<3; attempt++){
     try{
-      const res = await fetch(API_STATE, { cache: 'no-store' });
+      const res = await fetch(API_STATE, { cache: 'no-store', credentials: 'include' });
       if(!res.ok) throw new Error('load failed');
       const json = await res.json();
       return { value: JSON.stringify(json.state) };
@@ -548,6 +548,7 @@ async function save(){
       try{
         const result = await fetch(API_STATE, {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(state),
         });
