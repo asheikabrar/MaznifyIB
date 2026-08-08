@@ -30,20 +30,7 @@
           class="mt-1 w-full border rounded px-3 py-2 text-sm" />
       </label>
       <button class="w-full bg-indigo-600 text-white rounded px-3 py-2 text-sm">Sign in</button>
-      <div class="grid grid-cols-2 gap-2">
-        <button type="button" onclick="setLoginNext('/')" class="w-full bg-slate-100 text-slate-700 rounded px-3 py-2 text-sm">Study Mate</button>
-        <button type="button" onclick="setLoginNext('/revision-desk')" class="w-full bg-cyan-600 text-white rounded px-3 py-2 text-sm">Revision Desk</button>
-      </div>
     </form>
-    <script>
-      function setLoginNext(path) {
-        const nextInput = document.getElementById('next-field');
-        if (nextInput) {
-          nextInput.value = path;
-        }
-        document.getElementById('login-form').submit();
-      }
-    </script>
     <div class="mt-4 text-center text-[11px] text-slate-400">
       Accounts are managed by your administrator.
     </div>
