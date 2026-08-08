@@ -198,28 +198,51 @@ async def save_revision_desk_state(request: Request, db: Session = Depends(get_d
         raise HTTPException(status_code=500, detail=f"Auth error: {str(e)}")
     
     try:
+        # Parse incoming JSON
         state = await request.json()
-        if not isinstance(state, dict):
-            raise HTTPException(status_code=400, detail="Invalid state payload")
-        
+        print(f"Received state for user {uid}, size: {len(json.dumps(state))} bytes")
+    except Exception as e:
+        print(f"Error parsing JSON: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+    
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=400, detail="Invalid state payload: must be object")
+    
+    try:
+        # Serialize state to JSON string
+        state_json = json.dumps(state)
+        print(f"Serialized state to {len(state_json)} bytes")
+    except Exception as e:
+        print(f"Error serializing state: {e}")
+        raise HTTPException(status_code=400, detail=f"State JSON error: {str(e)}")
+    
+    try:
+        # Query or create revision desk state
         row = db.scalar(select(RevisionDeskState).where(RevisionDeskState.owner_id == uid))
         if row:
-            row.state = json.dumps(state)
+            print(f"Updating existing revision_desk_states for user {uid}")
+            row.state = state_json
             row.updated_at = datetime.utcnow()
         else:
-            db.add(RevisionDeskState(
+            print(f"Creating new revision_desk_states for user {uid}")
+            new_state = RevisionDeskState(
                 owner_id=uid,
-                state=json.dumps(state),
+                state=state_json,
                 updated_at=datetime.utcnow(),
-            ))
+            )
+            db.add(new_state)
+        
+        # Commit to database
         db.commit()
+        print(f"Successfully saved state for user {uid}")
         return {"ok": True}
-    except HTTPException as e:
-        raise e
     except Exception as e:
-        print(f"Error in save_revision_desk_state: {e}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Save error: {str(e)}")
+        print(f"Error in database operation: {type(e).__name__}: {e}")
+        try:
+            db.rollback()
+        except:
+            pass
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 @app.post("/revision-desk/attachments/upload")

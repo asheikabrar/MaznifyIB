@@ -553,7 +553,13 @@ async function save(){
           body: JSON.stringify(state),
         });
         if(result.ok) return true;
-        throw new Error('save failed');
+        // Capture error details from server
+        let errorMsg = `HTTP ${result.status}`;
+        try{
+          const errorData = await result.json();
+          if(errorData.detail) errorMsg += `: ${errorData.detail}`;
+        }catch(_){}
+        throw new Error(errorMsg);
       }catch(e){
         console.error('save failed (attempt '+(attempt+1)+')', e);
         if(attempt===0) await new Promise(r=>setTimeout(r,600));
