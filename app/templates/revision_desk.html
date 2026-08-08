@@ -455,14 +455,6 @@ async function load(){
   const beforeCount = data.subjects.length;
   data.subjects = data.subjects.filter(s => !['ia','internal assessment'].includes(s.name.trim().toLowerCase()));
   let dueDateCleared = 0;
-  data.subjects.forEach(s => {
-    s.chapters.forEach(c => {
-      if(!c.lastReviewed && c.dueDate){
-        c.dueDate = '';
-        dueDateCleared++;
-      }
-    });
-  });
   let taggedCount = 0;
   data.subjects.forEach(s => {
     if(s.isDefault === undefined){
