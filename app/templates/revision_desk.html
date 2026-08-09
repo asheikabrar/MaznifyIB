@@ -1218,7 +1218,10 @@ function renderTabs(){
   const todayStyle = todayActive
     ? `background:var(--ink); color:#fff; border-color:var(--ink);`
     : '';
+  const weekActive = activeTab==='week';
+  const weekStyle = weekActive ? `background:#0f766e; color:#fff; border-color:#0f766e;` : `border-color:rgba(15,118,110,0.4);`;
   let html = `<div class="tab" style="${todayStyle}" onclick="setTab('today')"><span class="tab-dot" style="background:${todayActive?'#fff':'var(--ink)'};"></span>Today</div>`;
+  html += `<div class="tab" style="${weekStyle}" onclick="setTab('week')"><span class="tab-dot" style="background:${weekActive?'#fff':'#0f766e'};"></span>7-Day Schedule</div>`;
   data.subjects.forEach(s=>{
     if(s.disabled) return;
     const color = getSubjectColor(s.id);
@@ -1408,6 +1411,44 @@ function renderQueueHtml(){
   return html;
 }
 
+function renderWeekHtml(){
+  const today = todayStr();
+  let html = '<div class="section-label">7-Day Schedule</div>';
+  let anyFound = false;
+  for(let d = 0; d <= 6; d++){
+    const dayStr = addDays(today, d);
+    const label = d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : formatDateDay(dayStr);
+    let items = [];
+    data.subjects.forEach(s=>{
+      if(s.disabled) return;
+      s.chapters.forEach(c=>{
+        if(c.disabled) return;
+        const diff = daysBetween(today, c.dueDate);
+        if(c.dueDate && diff === d) items.push({subject:s, chapter:c});
+      });
+    });
+    // On day 0 also include overdue
+    if(d === 0){
+      data.subjects.forEach(s=>{
+        if(s.disabled) return;
+        s.chapters.forEach(c=>{
+          if(c.disabled) return;
+          if(c.dueDate && daysBetween(today, c.dueDate) < 0) items.push({subject:s, chapter:c});
+        });
+      });
+    }
+    if(items.length === 0) continue;
+    anyFound = true;
+    const headColor = d === 0 ? 'var(--urgent)' : d <= 2 ? 'var(--primary)' : '#5f6368';
+    html += `<div style="margin-top:18px; margin-bottom:6px;">`;
+    html += `<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:${headColor};">${label}</span>`;
+    html += ` <span style="font-size:11px; color:#9aa0a6;">${items.length} chapter${items.length>1?'s':''}</span></div>`;
+    html += chapterTable(items.map(item => renderChapterRow(item.subject, item.chapter, true)).join(''));
+  }
+  if(!anyFound) html += '<div class="queue-empty">Nothing due in the next 7 days. All caught up!</div>';
+  return html;
+}
+
 function renderSubjectHtml(s){
   const color = getSubjectColor(s.id);
   let html = `<div class="subject-panel">
@@ -1494,6 +1535,10 @@ function renderContent(){
   const el = document.getElementById('tabContent');
   if(searchQuery){
     el.innerHTML = renderSearchResults();
+    return;
+  }
+  if(activeTab === 'week'){
+    el.innerHTML = renderWeekHtml();
     return;
   }
   if(activeTab !== 'today'){
