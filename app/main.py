@@ -1944,11 +1944,19 @@ def _serialize_fixed_rule(r: PlannerFixedRule) -> dict:
 
 def _planner_day_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
     week_start = study_planner.week_start_monday(on_date)
-    with study_planner.planner_generation_lock(uid, on_date):
-        study_planner.ensure_week_blocks(db, uid, on_date)
-        db.commit()
-
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
+    db.commit()
     week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    return _build_planner_day_payload(db, uid, on_date, week_start, week_blocks)
+
+
+def _build_planner_day_payload(
+    db: Session,
+    uid: Optional[int],
+    on_date: date,
+    week_start: date,
+    week_blocks: list["StudyPlannerBlock"],
+) -> dict:
     day_blocks = sorted(
         (b for b in week_blocks if b.on_date == on_date and b.block_kind != "placeholder"),
         key=lambda b: (b.slot_index, b.id),
@@ -2002,11 +2010,18 @@ def _planner_day_payload(db: Session, uid: Optional[int], on_date: date) -> dict
 
 def _planner_week_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
     week_start = study_planner.week_start_monday(on_date)
-    with study_planner.planner_generation_lock(uid, on_date):
-        study_planner.ensure_week_blocks(db, uid, on_date)
-        db.commit()
-
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
+    db.commit()
     week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    return _build_planner_week_payload(db, uid, week_start, week_blocks)
+
+
+def _build_planner_week_payload(
+    db: Session,
+    uid: Optional[int],
+    week_start: date,
+    week_blocks: list["StudyPlannerBlock"],
+) -> dict:
     week_dates = [week_start + timedelta(days=i) for i in range(7)]
     blocks_by_day: dict[str, list[dict]] = {d.isoformat(): [] for d in week_dates}
     for b in week_blocks:
@@ -2031,6 +2046,20 @@ def _planner_week_payload(db: Session, uid: Optional[int], on_date: date) -> dic
         "weekly_totals": {str(k): v for k, v in weekly_totals.items()},
         "subjects": [_serialize_planner_subject(s) for s in subjects],
         "day_completed_map": day_completed_map,
+    }
+
+
+def _planner_combined_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
+    """day + week payloads from a single ensure_week_blocks_safe() + get_week_blocks() call --
+    the frontend used to fetch these separately (2 round trips, 2 concurrent generation
+    attempts for the same week -- the root cause of the duplicate-block race)."""
+    week_start = study_planner.week_start_monday(on_date)
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
+    db.commit()
+    week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    return {
+        "day": _build_planner_day_payload(db, uid, on_date, week_start, week_blocks),
+        "week": _build_planner_week_payload(db, uid, week_start, week_blocks),
     }
 
 
@@ -2065,6 +2094,15 @@ def study_planner_api_week(request: Request, on: str = "", db: Session = Depends
     uid = _uid(request)
     on_date = _parse_planner_date(on) if on else date.today()
     return _planner_week_payload(db, uid, on_date)
+
+
+@app.get("/study-planner/api/plan")
+def study_planner_api_plan(request: Request, on: str = "", db: Session = Depends(get_db)):
+    """Combined day+week payload in one request -- the frontend used to fire /api/day
+    and /api/week concurrently for the same week, doubling round trips."""
+    uid = _uid(request)
+    on_date = _parse_planner_date(on) if on else date.today()
+    return _planner_combined_payload(db, uid, on_date)
 
 
 @app.post("/study-planner/api/blocks/{block_id}/toggle")
@@ -2167,7 +2205,7 @@ async def study_planner_api_block_add(request: Request, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     on_date = _parse_planner_date(payload.get("on") or "")
-    study_planner.ensure_week_blocks(db, uid, on_date)
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.flush()
 
     # a manually-added block means this day is no longer "empty"
@@ -2250,7 +2288,7 @@ async def study_planner_api_fixed_rule_add(request: Request, db: Session = Depen
     db.commit()
 
     on_date = _parse_planner_date(payload.get("on") or "") if payload.get("on") else date.today()
-    study_planner.ensure_week_blocks(db, uid, on_date)
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.commit()
     return _planner_day_payload(db, uid, on_date)
 
@@ -2304,7 +2342,7 @@ async def study_planner_api_block_carry_over(block_id: int, request: Request, db
     block.carried_forward = True
 
     next_date = block.on_date + timedelta(days=1)
-    study_planner.ensure_week_blocks(db, uid, next_date)
+    study_planner.ensure_week_blocks_safe(db, uid, next_date)
     db.flush()
 
     # a carried-over task means tomorrow is no longer "empty"
@@ -2449,7 +2487,7 @@ async def study_planner_api_add_due(request: Request, db: Session = Depends(get_
     if mapped_subject_id is None:
         return _planner_day_payload(db, uid, on_date)
 
-    study_planner.ensure_week_blocks(db, uid, on_date)
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.flush()
 
     day_blocks = list(
@@ -2563,7 +2601,7 @@ def study_planner_calendar_ics(user_id: int, token: str = "", db: Session = Depe
         week_start = study_planner.week_start_monday(cursor)
         if week_start not in seen_weeks:
             seen_weeks.add(week_start)
-            study_planner.ensure_week_blocks(db, user_id, cursor)
+            study_planner.ensure_week_blocks_safe(db, user_id, cursor)
         cursor += timedelta(days=7)
     db.commit()
 
@@ -2645,7 +2683,7 @@ def study_planner_view(
         on_date = date.today()
 
     week_start = study_planner.week_start_monday(on_date)
-    study_planner.ensure_week_blocks(db, uid, on_date)
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.commit()
 
     week_blocks = study_planner.get_week_blocks(db, uid, week_start)
@@ -2944,7 +2982,7 @@ def study_planner_add_due_to_day(
     if mapped_subject_id is None:
         return RedirectResponse(f"/study-planner?on={on_date.isoformat()}", status_code=303)
 
-    study_planner.ensure_week_blocks(db, uid, on_date)
+    study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.flush()
 
     day_blocks = list(

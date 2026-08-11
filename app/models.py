@@ -171,6 +171,12 @@ class RevisionDeskState(Base):
 
 class StudyPlannerBlock(Base):
     __tablename__ = "study_planner_blocks"
+    __table_args__ = (
+        # Guards against the same slot being generated twice by concurrent requests
+        # (e.g. the frontend's simultaneous /api/day + /api/week fetches landing on
+        # separate serverless instances that can't share an in-process lock).
+        UniqueConstraint("owner_id", "on_date", "slot_index", name="uq_planner_block_owner_date_slot"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)

@@ -87,7 +87,63 @@ _INDEXES: list[tuple[str, str, str]] = [
         "ix_study_sessions_owner_topic_started",
         "CREATE INDEX IF NOT EXISTS ix_study_sessions_owner_topic_started ON study_sessions(owner_id, topic_id, started_at)",
     ),
+    (
+        "study_planner_blocks",
+        "uq_planner_block_owner_date_slot",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_planner_block_owner_date_slot ON study_planner_blocks(owner_id, on_date, slot_index)",
+    ),
 ]
+
+
+# One-time cleanup statements run immediately before an index is created for the
+# first time, keyed by index name. Needed for uq_planner_block_owner_date_slot:
+# earlier versions of the app had a race that let concurrent requests insert
+# duplicate (owner_id, on_date, slot_index) rows, and CREATE UNIQUE INDEX fails
+# outright if any duplicates already exist. Since this only runs the run *before*
+# the index exists (guarded by the same index_cache check below), it's naturally
+# a one-time migration step per database, not a per-request/per-cold-start cost.
+_PRE_INDEX_DEDUPE: dict[str, tuple[str, ...]] = {
+    "uq_planner_block_owner_date_slot": (
+        """
+        DELETE FROM study_planner_revision_links
+        WHERE block_id IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY owner_id, on_date, slot_index ORDER BY id
+                ) AS rn
+                FROM study_planner_blocks
+                WHERE owner_id IS NOT NULL
+            ) t WHERE rn > 1
+        )
+        """,
+        """
+        UPDATE study_planner_blocks
+        SET carried_from_id = NULL
+        WHERE carried_from_id IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY owner_id, on_date, slot_index ORDER BY id
+                ) AS rn
+                FROM study_planner_blocks
+                WHERE owner_id IS NOT NULL
+            ) t WHERE rn > 1
+        )
+        """,
+        """
+        DELETE FROM study_planner_blocks
+        WHERE owner_id IS NOT NULL AND id IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY owner_id, on_date, slot_index ORDER BY id
+                ) AS rn
+                FROM study_planner_blocks
+                WHERE owner_id IS NOT NULL
+            ) t WHERE rn > 1
+        )
+        """,
+    ),
+}
+
 
 
 _OWNER_TABLES = (
@@ -125,6 +181,8 @@ def apply_lightweight_migrations() -> None:
                 index_cache[table] = {idx["name"] for idx in inspector.get_indexes(table)}
             if index_name in index_cache[table]:
                 continue
+            for dedupe_sql in _PRE_INDEX_DEDUPE.get(index_name, ()):
+                conn.execute(text(dedupe_sql))
             conn.execute(text(ddl))
             index_cache[table].add(index_name)
 

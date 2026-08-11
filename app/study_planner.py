@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import json
-import threading
+import time
 from collections import defaultdict
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -21,21 +21,14 @@ from app.models import (
 )
 
 # The frontend fetches /api/day and /api/week concurrently on every refresh, and both
-# call ensure_week_blocks(). Without serializing them, two requests for a not-yet-generated
+# call ensure_week_blocks(). Without protection, two requests for a not-yet-generated
 # week can each see zero existing rows and both insert a full week of blocks, duplicating
-# everything. This lock makes the generate+commit for a given (user, week) atomic.
-_week_gen_locks: dict[tuple[int, date], threading.Lock] = {}
-_week_gen_locks_guard = threading.Lock()
-
-
-@contextmanager
-def planner_generation_lock(user_id: int, anchor_date: date):
-    week_start = week_start_monday(anchor_date)
-    key = (user_id, week_start)
-    with _week_gen_locks_guard:
-        lock = _week_gen_locks.setdefault(key, threading.Lock())
-    with lock:
-        yield
+# everything. An in-process lock alone isn't enough here: on Vercel's serverless model,
+# concurrent requests can land on entirely separate processes/instances that share no
+# memory. The real cross-process guard is the `uq_planner_block_owner_date_slot` unique
+# DB constraint (see app/models.py + the migration in app/db.py) combined with
+# ensure_week_blocks_safe() below, which tolerates losing that race instead of
+# duplicating rows.
 
 REVISION_INTERVALS = [2, 4, 7, 14, 30]
 
@@ -502,6 +495,38 @@ def ensure_week_blocks(db: Session, user_id: int, anchor_date: date) -> None:
                 slot += 1
 
     _apply_fixed_rules_for_week(db, user_id, week_start)
+
+
+def ensure_week_blocks_safe(db: Session, user_id: int, anchor_date: date) -> None:
+    """ensure_week_blocks(), tolerant of a concurrent request generating the exact
+    same week's blocks at the same time (e.g. the frontend's simultaneous
+    /api/day + /api/week fetches landing on two separate serverless instances that
+    share no memory).
+
+    Runs the generation in a SAVEPOINT and relies on the uq_planner_block_owner_date_slot
+    DB constraint to turn what would have been a duplicate-row race into a harmless,
+    swallowed IntegrityError -- whichever request commits first "wins" and the loser
+    just discards its attempt and reads the winner's rows on the next query.
+
+    Also tolerates OperationalError: local SQLite only allows one writer active
+    against the *whole* database file at a time (not just per-row, unlike Postgres),
+    so heavy concurrent writers -- even ones touching unrelated weeks -- can hit
+    "database is locked" even with busy_timeout set. Postgres (prod) doesn't have
+    this failure mode. A few short retries give other in-flight transactions a
+    chance to finish committing before we give up -- without retrying, concurrent
+    requests can all fail and leave a week ungenerated until the next unrelated
+    refresh.
+    """
+    delays = (0.05, 0.1, 0.2)
+    for attempt in range(len(delays) + 1):
+        try:
+            with db.begin_nested():
+                ensure_week_blocks(db, user_id, anchor_date)
+            return
+        except (IntegrityError, OperationalError):
+            if attempt == len(delays):
+                return
+            time.sleep(delays[attempt])
 
 
 def map_due_card_subject_to_id(card: RevisionDueCard, subjects: list[Subject]) -> Optional[int]:

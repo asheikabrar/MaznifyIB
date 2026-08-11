@@ -1259,12 +1259,12 @@ async function plannerRefresh(){
   plannerLoading = true;
   render();
   try{
-    const [dayRes, weekRes] = await Promise.all([
-      fetch(`/study-planner/api/day?on=${plannerOn}`, { credentials: 'include' }),
-      fetch(`/study-planner/api/week?on=${plannerOn}`, { credentials: 'include' }),
-    ]);
-    if(dayRes.ok) plannerDayData = await dayRes.json();
-    if(weekRes.ok) plannerWeekData = await weekRes.json();
+    const res = await fetch(`/study-planner/api/plan?on=${plannerOn}`, { credentials: 'include' });
+    if(res.ok){
+      const data = await res.json();
+      plannerDayData = data.day;
+      plannerWeekData = data.week;
+    }
   }catch(e){
     console.error('planner refresh failed', e);
     showToast('Could not load Study Planner. Try again.');
