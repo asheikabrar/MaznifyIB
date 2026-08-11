@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -17,6 +19,23 @@ from app.models import (
     StudyPlannerRevisionLink,
     Subject,
 )
+
+# The frontend fetches /api/day and /api/week concurrently on every refresh, and both
+# call ensure_week_blocks(). Without serializing them, two requests for a not-yet-generated
+# week can each see zero existing rows and both insert a full week of blocks, duplicating
+# everything. This lock makes the generate+commit for a given (user, week) atomic.
+_week_gen_locks: dict[tuple[int, date], threading.Lock] = {}
+_week_gen_locks_guard = threading.Lock()
+
+
+@contextmanager
+def planner_generation_lock(user_id: int, anchor_date: date):
+    week_start = week_start_monday(anchor_date)
+    key = (user_id, week_start)
+    with _week_gen_locks_guard:
+        lock = _week_gen_locks.setdefault(key, threading.Lock())
+    with lock:
+        yield
 
 REVISION_INTERVALS = [2, 4, 7, 14, 30]
 

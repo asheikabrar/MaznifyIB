@@ -1944,8 +1944,9 @@ def _serialize_fixed_rule(r: PlannerFixedRule) -> dict:
 
 def _planner_day_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
     week_start = study_planner.week_start_monday(on_date)
-    study_planner.ensure_week_blocks(db, uid, on_date)
-    db.commit()
+    with study_planner.planner_generation_lock(uid, on_date):
+        study_planner.ensure_week_blocks(db, uid, on_date)
+        db.commit()
 
     week_blocks = study_planner.get_week_blocks(db, uid, week_start)
     day_blocks = sorted(
@@ -2001,8 +2002,9 @@ def _planner_day_payload(db: Session, uid: Optional[int], on_date: date) -> dict
 
 def _planner_week_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
     week_start = study_planner.week_start_monday(on_date)
-    study_planner.ensure_week_blocks(db, uid, on_date)
-    db.commit()
+    with study_planner.planner_generation_lock(uid, on_date):
+        study_planner.ensure_week_blocks(db, uid, on_date)
+        db.commit()
 
     week_blocks = study_planner.get_week_blocks(db, uid, week_start)
     week_dates = [week_start + timedelta(days=i) for i in range(7)]
