@@ -2049,6 +2049,18 @@ def _build_planner_week_payload(
     }
 
 
+def _planner_day_payload_light(db: Session, uid: Optional[int], on_date: date) -> dict:
+    """Same result as _planner_day_payload() but skips ensure_week_blocks_safe() --
+    for use right after a block mutation (toggle/edit/delete/carry-over/move/reorder),
+    where the week is already known to exist because we just read/wrote a block in it.
+    Re-running the full week generation-check (a week-wide query + subjects + revision-desk
+    state load + fixed-rules query + a SAVEPOINT + commit) on every single checkbox click
+    was pure redundant latency, especially over the network to prod's Postgres."""
+    week_start = study_planner.week_start_monday(on_date)
+    week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    return _build_planner_day_payload(db, uid, on_date, week_start, week_blocks)
+
+
 def _planner_combined_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
     """day + week payloads from a single ensure_week_blocks_safe() + get_week_blocks() call --
     the frontend used to fetch these separately (2 round trips, 2 concurrent generation
@@ -2127,7 +2139,7 @@ async def study_planner_api_block_toggle(block_id: int, request: Request, db: Se
             block.revision_pushed_at = datetime.utcnow()
 
     db.commit()
-    return _planner_day_payload(db, uid, block.on_date)
+    return _planner_day_payload_light(db, uid, block.on_date)
 
 
 @app.post("/study-planner/api/blocks/{block_id}/update")
@@ -2156,7 +2168,7 @@ async def study_planner_api_block_update(block_id: int, request: Request, db: Se
     block.subject_id = int(subject_id) if subject_id else None
 
     db.commit()
-    return _planner_day_payload(db, uid, block.on_date)
+    return _planner_day_payload_light(db, uid, block.on_date)
 
 
 @app.post("/study-planner/api/blocks/{block_id}/delete")
@@ -2193,7 +2205,7 @@ async def study_planner_api_block_delete(block_id: int, request: Request, db: Se
         )
 
     db.commit()
-    return _planner_day_payload(db, uid, on_date)
+    return _planner_day_payload_light(db, uid, on_date)
 
 
 @app.post("/study-planner/api/blocks/add")
@@ -2246,7 +2258,7 @@ async def study_planner_api_block_add(request: Request, db: Session = Depends(ge
     )
     db.add(block)
     db.commit()
-    return _planner_day_payload(db, uid, on_date)
+    return _planner_day_payload_light(db, uid, on_date)
 
 
 @app.post("/study-planner/api/fixed-rules/add")
@@ -2290,7 +2302,7 @@ async def study_planner_api_fixed_rule_add(request: Request, db: Session = Depen
     on_date = _parse_planner_date(payload.get("on") or "") if payload.get("on") else date.today()
     study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.commit()
-    return _planner_day_payload(db, uid, on_date)
+    return _planner_day_payload_light(db, uid, on_date)
 
 
 @app.post("/study-planner/api/fixed-rules/{rule_id}/delete")
@@ -2383,7 +2395,7 @@ async def study_planner_api_block_carry_over(block_id: int, request: Request, db
         link.block_id = new_block.id
 
     db.commit()
-    return _planner_day_payload(db, uid, block.on_date)
+    return _planner_day_payload_light(db, uid, block.on_date)
 
 
 @app.post("/study-planner/api/blocks/{block_id}/move")
@@ -2420,7 +2432,7 @@ async def study_planner_api_block_move(block_id: int, request: Request, db: Sess
                 block.slot_index, other.slot_index = other.slot_index, block.slot_index
 
     db.commit()
-    return _planner_day_payload(db, uid, block.on_date)
+    return _planner_day_payload_light(db, uid, block.on_date)
 
 
 @app.post("/study-planner/api/blocks/{block_id}/pull-subject-due")
@@ -2454,7 +2466,7 @@ async def study_planner_api_pull_subject_due(block_id: int, request: Request, db
                 block.task_name = f"{subj.name}: due revision cards"
 
     db.commit()
-    return _planner_day_payload(db, uid, on_date)
+    return _planner_day_payload_light(db, uid, on_date)
 
 
 @app.post("/study-planner/api/add-due")
@@ -2481,11 +2493,11 @@ async def study_planner_api_add_due(request: Request, db: Session = Depends(get_
         None,
     )
     if not due_card:
-        return _planner_day_payload(db, uid, on_date)
+        return _planner_day_payload_light(db, uid, on_date)
 
     mapped_subject_id = study_planner.map_due_card_subject_to_id(due_card, subjects)
     if mapped_subject_id is None:
-        return _planner_day_payload(db, uid, on_date)
+        return _planner_day_payload_light(db, uid, on_date)
 
     study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.flush()
@@ -2522,7 +2534,7 @@ async def study_planner_api_add_due(request: Request, db: Session = Depends(get_
 
     study_planner.add_due_link_to_block(db, target, due_card)
     db.commit()
-    return _planner_day_payload(db, uid, on_date)
+    return _planner_day_payload_light(db, uid, on_date)
 
 
 @app.post("/study-planner/api/blocks/reorder")
@@ -2563,7 +2575,7 @@ async def study_planner_api_blocks_reorder(request: Request, db: Session = Depen
         seen.add(bid)
 
     db.commit()
-    return _planner_day_payload(db, uid, on_date)
+    return _planner_day_payload_light(db, uid, on_date)
 
 
 def _ics_escape(text: str) -> str:
