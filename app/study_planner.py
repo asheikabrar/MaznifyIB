@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     PlannerFixedRule,
@@ -619,6 +619,7 @@ def get_week_blocks(
             .where(StudyPlannerBlock.owner_id == user_id)
             .where(StudyPlannerBlock.on_date >= week_start)
             .where(StudyPlannerBlock.on_date <= week_end)
+            .options(selectinload(StudyPlannerBlock.revision_links))
             .order_by(StudyPlannerBlock.on_date, StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
         )
     )

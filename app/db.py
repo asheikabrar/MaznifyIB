@@ -1,14 +1,30 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
 
 settings = get_settings()
+_is_sqlite = settings.database_url.startswith("sqlite")
 
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False, "timeout": 30} if _is_sqlite else {},
+    pool_pre_ping=True,  # recycle connections Neon/managed Postgres silently closed after idling
 )
+
+if _is_sqlite:
+    # WAL lets readers proceed while a write is in flight (the Study Planner's
+    # day+week API calls hit the DB concurrently), and NORMAL sync avoids an
+    # fsync on every single commit -- the default rollback-journal settings
+    # were the main cause of the planner feeling slow to load.
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -85,24 +101,32 @@ def apply_lightweight_migrations() -> None:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     newly_added_owner_id_tables: list[str] = []
+    # cache per-table introspection: on a networked DB (Postgres/Neon in prod) each
+    # get_columns/get_indexes call is a round trip, and this runs on every cold start
+    columns_cache: dict[str, set[str]] = {}
+    index_cache: dict[str, set[str]] = {}
     with engine.begin() as conn:
         for table, column, ddl in _MIGRATIONS:
             if table not in existing_tables:
                 continue
-            cols = {c["name"] for c in inspector.get_columns(table)}
-            if column in cols:
+            if table not in columns_cache:
+                columns_cache[table] = {c["name"] for c in inspector.get_columns(table)}
+            if column in columns_cache[table]:
                 continue
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            columns_cache[table].add(column)
             if column == "owner_id" and table in _OWNER_TABLES:
                 newly_added_owner_id_tables.append(table)
 
         for table, index_name, ddl in _INDEXES:
             if table not in existing_tables:
                 continue
-            existing_index_names = {idx["name"] for idx in inspector.get_indexes(table)}
-            if index_name in existing_index_names:
+            if table not in index_cache:
+                index_cache[table] = {idx["name"] for idx in inspector.get_indexes(table)}
+            if index_name in index_cache[table]:
                 continue
             conn.execute(text(ddl))
+            index_cache[table].add(index_name)
 
     # Back-fill: any pre-existing rows now have NULL owner_id. Assign them
     # to the first admin user so the historical data continues to belong
