@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Optional
 
 from urllib.parse import urlparse
 
@@ -10,11 +12,12 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, 
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, delete, func
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import ai, auth, notes, planner, scheduler
+from app import ai, auth, notes, planner, scheduler, study_planner
+from app.config import get_settings
 from app.db import Base, SessionLocal, apply_lightweight_migrations, engine, get_db
 from app.models import (
     AvailabilityException,
@@ -23,7 +26,10 @@ from app.models import (
     ChatSession,
     Deadline,
     NoteFile,
+    PlannerFixedRule,
     RevisionDeskState,
+    StudyPlannerBlock,
+    StudyPlannerRevisionLink,
     StudySession,
     Subject,
     Task,
@@ -1494,6 +1500,9 @@ def settings_view(request: Request, db: Session = Depends(get_db)):
     ctx["exceptions"] = exceptions
     ctx["exceptions_grouped"] = exceptions_grouped
     ctx["conflicts"] = conflicts
+    user = db.get(User, uid)
+    token = _ensure_calendar_token(db, user)
+    ctx["calendar_ics_path"] = f"/study-planner/calendar/{uid}.ics?token={token}"
     return templates.TemplateResponse("settings.html", ctx)
 
 
@@ -1890,6 +1899,1091 @@ def plan_view(request: Request, on: str = "", db: Session = Depends(get_db)):
     return templates.TemplateResponse("plan.html", ctx)
 
 
+def _serialize_planner_subject(s: Subject) -> dict:
+    return {"id": s.id, "name": s.name, "icon": s.icon, "color": s.color}
+
+
+def _serialize_planner_block(b: StudyPlannerBlock) -> dict:
+    return {
+        "id": b.id,
+        "on_date": b.on_date.isoformat(),
+        "slot_index": b.slot_index,
+        "block_kind": b.block_kind,
+        "subject_id": b.subject_id,
+        "task_name": b.task_name,
+        "duration_minutes": b.duration_minutes,
+        "start_time": b.start_time or "",
+        "end_time": b.end_time or "",
+        "is_fixed": b.is_fixed,
+        "is_optional": b.is_optional,
+        "completed": b.completed,
+        "carried_forward": b.carried_forward,
+        "carried_from_id": b.carried_from_id,
+        "source_rule_id": b.source_rule_id,
+        "revision_links": [
+            {
+                "revision_chapter_name": link.revision_chapter_name,
+                "due_date": link.due_date,
+            }
+            for link in b.revision_links
+        ],
+    }
+
+
+def _serialize_fixed_rule(r: PlannerFixedRule) -> dict:
+    return {
+        "id": r.id,
+        "weekday": r.weekday,
+        "subject_id": r.subject_id,
+        "task_name": r.task_name,
+        "start_time": r.start_time or "",
+        "duration_minutes": r.duration_minutes,
+        "is_optional": r.is_optional,
+    }
+
+
+def _planner_day_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
+    week_start = study_planner.week_start_monday(on_date)
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.commit()
+
+    week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    day_blocks = sorted(
+        (b for b in week_blocks if b.on_date == on_date and b.block_kind != "placeholder"),
+        key=lambda b: (b.slot_index, b.id),
+    )
+
+    subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+
+    revision_state = study_planner.load_revision_desk_state(db, uid)
+    due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
+
+    due_cards_mapped: list[dict] = []
+    for c in due_cards:
+        sid = study_planner.map_due_card_subject_to_id(c, subjects)
+        due_cards_mapped.append(
+            {
+                "subject_id": sid,
+                "revision_subject_id": c.subject_id,
+                "revision_chapter_id": c.chapter_id,
+                "subject_name": c.subject_name,
+                "chapter_name": c.chapter_name,
+                "due_date": c.due_date,
+            }
+        )
+
+    linked_keys = [
+        f"{link.revision_subject_id}::{link.revision_chapter_id}"
+        for b in day_blocks
+        for link in b.revision_links
+    ]
+
+    day_required = [b for b in day_blocks if not b.is_optional]
+    day_completed = bool(day_required) and all(b.completed for b in day_required)
+    streak_days = study_planner.planner_streak_days(db, uid, date.today())
+    fixed_rules = study_planner.get_fixed_rules_for_user(db, uid)
+
+    return {
+        "on": on_date.isoformat(),
+        "prev": (on_date - timedelta(days=1)).isoformat(),
+        "next": (on_date + timedelta(days=1)).isoformat(),
+        "week_start": week_start.isoformat(),
+        "week_dates": [(week_start + timedelta(days=i)).isoformat() for i in range(7)],
+        "day_blocks": [_serialize_planner_block(b) for b in day_blocks],
+        "subjects": [_serialize_planner_subject(s) for s in subjects],
+        "due_cards": due_cards_mapped,
+        "linked_keys": linked_keys,
+        "streak_days": streak_days,
+        "day_completed": day_completed,
+        "fixed_rules": [_serialize_fixed_rule(r) for r in fixed_rules],
+    }
+
+
+def _planner_week_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
+    week_start = study_planner.week_start_monday(on_date)
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.commit()
+
+    week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    week_dates = [week_start + timedelta(days=i) for i in range(7)]
+    blocks_by_day: dict[str, list[dict]] = {d.isoformat(): [] for d in week_dates}
+    for b in week_blocks:
+        if b.block_kind == "placeholder":
+            continue
+        blocks_by_day.setdefault(b.on_date.isoformat(), []).append(_serialize_planner_block(b))
+    for day_iso in blocks_by_day:
+        blocks_by_day[day_iso].sort(key=lambda b: (b["slot_index"], b["id"]))
+
+    subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+    weekly_totals = study_planner.weekly_subject_minutes(week_blocks)
+
+    day_completed_map: dict[str, bool] = {}
+    for day_iso, blocks in blocks_by_day.items():
+        required = [b for b in blocks if not b["is_optional"]]
+        day_completed_map[day_iso] = bool(required) and all(b["completed"] for b in required)
+
+    return {
+        "week_start": week_start.isoformat(),
+        "week_dates": [d.isoformat() for d in week_dates],
+        "blocks_by_day": blocks_by_day,
+        "weekly_totals": {str(k): v for k, v in weekly_totals.items()},
+        "subjects": [_serialize_planner_subject(s) for s in subjects],
+        "day_completed_map": day_completed_map,
+    }
+
+
+def _parse_planner_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return date.today()
+
+
+def _normalize_planner_time(value) -> Optional[str]:
+    """Validate a "HH:MM" 24h time string; returns None if blank/invalid."""
+    if not value:
+        return None
+    value = str(value).strip()
+    try:
+        time.fromisoformat(value)
+    except ValueError:
+        return None
+    return value[:5]
+
+
+@app.get("/study-planner/api/day")
+def study_planner_api_day(request: Request, on: str = "", db: Session = Depends(get_db)):
+    uid = _uid(request)
+    on_date = _parse_planner_date(on) if on else date.today()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.get("/study-planner/api/week")
+def study_planner_api_week(request: Request, on: str = "", db: Session = Depends(get_db)):
+    uid = _uid(request)
+    on_date = _parse_planner_date(on) if on else date.today()
+    return _planner_week_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/blocks/{block_id}/toggle")
+async def study_planner_api_block_toggle(block_id: int, request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    now_completed = bool(payload.get("completed"))
+    was_completed = bool(block.completed)
+    block.completed = now_completed
+    block.completed_at = datetime.utcnow() if now_completed else None
+
+    if now_completed and not was_completed and block.revision_pushed_at is None:
+        pushed = study_planner.push_block_links_to_revision_state(db, uid, block)
+        if pushed > 0:
+            block.revision_pushed_at = datetime.utcnow()
+
+    db.commit()
+    return _planner_day_payload(db, uid, block.on_date)
+
+
+@app.post("/study-planner/api/blocks/{block_id}/update")
+async def study_planner_api_block_update(block_id: int, request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    block.task_name = str(payload.get("task_name") or "").strip()
+    try:
+        block.duration_minutes = max(10, min(180, int(payload.get("duration_minutes") or 50)))
+    except (TypeError, ValueError):
+        block.duration_minutes = 50
+    block.start_time = _normalize_planner_time(payload.get("start_time"))
+    block.end_time = _normalize_planner_time(payload.get("end_time"))
+
+    if "is_fixed" in payload:
+        block.is_fixed = bool(payload.get("is_fixed"))
+
+    subject_id = payload.get("subject_id")
+    block.subject_id = int(subject_id) if subject_id else None
+
+    db.commit()
+    return _planner_day_payload(db, uid, block.on_date)
+
+
+@app.post("/study-planner/api/blocks/{block_id}/delete")
+async def study_planner_api_block_delete(block_id: int, request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+
+    on_date = block.on_date
+    db.delete(block)
+    db.flush()
+
+    remaining = db.scalar(
+        select(func.count())
+        .select_from(StudyPlannerBlock)
+        .where(StudyPlannerBlock.owner_id == uid)
+        .where(StudyPlannerBlock.on_date == on_date)
+    ) or 0
+    if remaining == 0:
+        # keep a hidden placeholder so ensure_week_blocks() won't regenerate the default
+        # schedule for a day the student intentionally emptied out
+        db.add(
+            StudyPlannerBlock(
+                owner_id=uid,
+                on_date=on_date,
+                slot_index=0,
+                block_kind="placeholder",
+                task_name="",
+                duration_minutes=0,
+                is_fixed=False,
+                is_optional=True,
+            )
+        )
+
+    db.commit()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/blocks/add")
+async def study_planner_api_block_add(request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    on_date = _parse_planner_date(payload.get("on") or "")
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.flush()
+
+    # a manually-added block means this day is no longer "empty"
+    db.execute(
+        delete(StudyPlannerBlock)
+        .where(StudyPlannerBlock.owner_id == uid)
+        .where(StudyPlannerBlock.on_date == on_date)
+        .where(StudyPlannerBlock.block_kind == "placeholder")
+    )
+
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == on_date)
+        )
+    )
+    max_slot = max((b.slot_index for b in day_blocks), default=-1)
+
+    try:
+        duration_minutes = max(10, min(180, int(payload.get("duration_minutes") or 50)))
+    except (TypeError, ValueError):
+        duration_minutes = 50
+    subject_id = payload.get("subject_id")
+
+    block = StudyPlannerBlock(
+        owner_id=uid,
+        on_date=on_date,
+        slot_index=max_slot + 1,
+        block_kind="custom",
+        subject_id=int(subject_id) if subject_id else None,
+        task_name=str(payload.get("task_name") or "").strip() or "Study block",
+        duration_minutes=duration_minutes,
+        start_time=_normalize_planner_time(payload.get("start_time")),
+        end_time=_normalize_planner_time(payload.get("end_time")),
+        is_fixed=bool(payload.get("is_fixed")),
+        is_optional=bool(payload.get("is_optional")),
+    )
+    db.add(block)
+    db.commit()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/fixed-rules/add")
+async def study_planner_api_fixed_rule_add(request: Request, db: Session = Depends(get_db)):
+    """Create a recurring fixed commitment (e.g. "every Tuesday") and materialize
+    it into the currently-viewed week right away."""
+    uid = _uid(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    weekday_raw = payload.get("weekday")
+    weekday: Optional[int] = None
+    if weekday_raw not in (None, "", "all"):
+        try:
+            weekday = int(weekday_raw)
+        except (TypeError, ValueError):
+            weekday = None
+        if weekday is not None and not (0 <= weekday <= 6):
+            weekday = None
+
+    try:
+        duration_minutes = max(10, min(180, int(payload.get("duration_minutes") or 50)))
+    except (TypeError, ValueError):
+        duration_minutes = 50
+    subject_id = payload.get("subject_id")
+
+    rule = PlannerFixedRule(
+        owner_id=uid,
+        weekday=weekday,
+        subject_id=int(subject_id) if subject_id else None,
+        task_name=str(payload.get("task_name") or "").strip() or "Study block",
+        start_time=_normalize_planner_time(payload.get("start_time")),
+        duration_minutes=duration_minutes,
+        is_optional=bool(payload.get("is_optional")),
+    )
+    db.add(rule)
+    db.commit()
+
+    on_date = _parse_planner_date(payload.get("on") or "") if payload.get("on") else date.today()
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.commit()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/fixed-rules/{rule_id}/delete")
+async def study_planner_api_fixed_rule_delete(rule_id: int, request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    rule = db.get(PlannerFixedRule, rule_id)
+    if not rule or rule.owner_id != uid:
+        raise HTTPException(404)
+
+    db.delete(rule)
+    # drop any not-yet-happened generated instances so they stop showing on the plan
+    db.execute(
+        delete(StudyPlannerBlock)
+        .where(StudyPlannerBlock.owner_id == uid)
+        .where(StudyPlannerBlock.source_rule_id == rule_id)
+        .where(StudyPlannerBlock.on_date >= date.today())
+        .where(StudyPlannerBlock.completed.is_(False))
+    )
+    db.commit()
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    on_date = _parse_planner_date(payload.get("on") or "") if payload.get("on") else date.today()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/blocks/{block_id}/carry-over")
+async def study_planner_api_block_carry_over(block_id: int, request: Request, db: Session = Depends(get_db)):
+    """Mark today's block as done (so the student's daily streak isn't broken) and
+    push the unfinished remainder onto tomorrow's plan as a new linked block."""
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    try:
+        remaining_minutes = max(10, min(180, int(payload.get("remaining_minutes") or block.duration_minutes)))
+    except (TypeError, ValueError):
+        remaining_minutes = block.duration_minutes
+
+    block.completed = True
+    block.completed_at = datetime.utcnow()
+    block.carried_forward = True
+
+    next_date = block.on_date + timedelta(days=1)
+    study_planner.ensure_week_blocks(db, uid, next_date)
+    db.flush()
+
+    # a carried-over task means tomorrow is no longer "empty"
+    db.execute(
+        delete(StudyPlannerBlock)
+        .where(StudyPlannerBlock.owner_id == uid)
+        .where(StudyPlannerBlock.on_date == next_date)
+        .where(StudyPlannerBlock.block_kind == "placeholder")
+    )
+
+    next_day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == next_date)
+        )
+    )
+    max_slot = max((b.slot_index for b in next_day_blocks), default=-1)
+
+    new_block = StudyPlannerBlock(
+        owner_id=uid,
+        on_date=next_date,
+        slot_index=max_slot + 1,
+        block_kind=block.block_kind,
+        subject_id=block.subject_id,
+        task_name=f"\u21bb {block.task_name}".strip() if block.task_name else "Continued study block",
+        duration_minutes=remaining_minutes,
+        is_fixed=False,
+        is_optional=False,
+        carried_from_id=block.id,
+    )
+    db.add(new_block)
+    db.flush()
+
+    # move any linked due cards forward with the unfinished work rather than
+    # marking them pushed against a block that wasn't actually finished
+    for link in list(block.revision_links):
+        link.block_id = new_block.id
+
+    db.commit()
+    return _planner_day_payload(db, uid, block.on_date)
+
+
+@app.post("/study-planner/api/blocks/{block_id}/move")
+async def study_planner_api_block_move(block_id: int, request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    direction = payload.get("direction") or "up"
+
+    if not block.is_fixed:
+        day_blocks = list(
+            db.scalars(
+                select(StudyPlannerBlock)
+                .where(StudyPlannerBlock.owner_id == uid)
+                .where(StudyPlannerBlock.on_date == block.on_date)
+                .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
+            )
+        )
+        movable = [b for b in day_blocks if not b.is_fixed]
+        try:
+            idx = [b.id for b in movable].index(block.id)
+        except ValueError:
+            idx = -1
+
+        if idx >= 0:
+            swap_idx = idx - 1 if direction == "up" else idx + 1
+            if 0 <= swap_idx < len(movable):
+                other = movable[swap_idx]
+                block.slot_index, other.slot_index = other.slot_index, block.slot_index
+
+    db.commit()
+    return _planner_day_payload(db, uid, block.on_date)
+
+
+@app.post("/study-planner/api/blocks/{block_id}/pull-subject-due")
+async def study_planner_api_pull_subject_due(block_id: int, request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    on_date = _parse_planner_date(payload.get("on") or "") if payload.get("on") else block.on_date
+
+    if block.subject_id:
+        subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+        revision_state = study_planner.load_revision_desk_state(db, uid)
+        due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
+
+        added = False
+        for card in due_cards:
+            sid = study_planner.map_due_card_subject_to_id(card, subjects)
+            if sid != block.subject_id:
+                continue
+            added = study_planner.add_due_link_to_block(db, block, card) or added
+
+        if added and not block.task_name.strip():
+            subj = db.get(Subject, block.subject_id)
+            if subj:
+                block.task_name = f"{subj.name}: due revision cards"
+
+    db.commit()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/add-due")
+async def study_planner_api_add_due(request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    on_date = _parse_planner_date(payload.get("on") or "")
+    revision_subject_id = str(payload.get("revision_subject_id") or "")
+    revision_chapter_id = str(payload.get("revision_chapter_id") or "")
+
+    subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+    revision_state = study_planner.load_revision_desk_state(db, uid)
+    due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
+    due_card = next(
+        (
+            c
+            for c in due_cards
+            if c.subject_id == revision_subject_id and c.chapter_id == revision_chapter_id
+        ),
+        None,
+    )
+    if not due_card:
+        return _planner_day_payload(db, uid, on_date)
+
+    mapped_subject_id = study_planner.map_due_card_subject_to_id(due_card, subjects)
+    if mapped_subject_id is None:
+        return _planner_day_payload(db, uid, on_date)
+
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.flush()
+
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == on_date)
+            .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
+        )
+    )
+    target = next(
+        (b for b in day_blocks if (not b.is_fixed) and b.subject_id == mapped_subject_id),
+        None,
+    )
+
+    if target is None:
+        max_slot = max((b.slot_index for b in day_blocks), default=-1)
+        subj = db.get(Subject, mapped_subject_id)
+        target = StudyPlannerBlock(
+            owner_id=uid,
+            on_date=on_date,
+            slot_index=max_slot + 1,
+            block_kind="rotating",
+            subject_id=mapped_subject_id,
+            task_name=f"{subj.name if subj else 'Subject'}: due revision cards",
+            duration_minutes=50,
+            is_fixed=False,
+            is_optional=False,
+        )
+        db.add(target)
+        db.flush()
+
+    study_planner.add_due_link_to_block(db, target, due_card)
+    db.commit()
+    return _planner_day_payload(db, uid, on_date)
+
+
+@app.post("/study-planner/api/blocks/reorder")
+async def study_planner_api_blocks_reorder(request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    on_date = _parse_planner_date(payload.get("on") or "")
+    order = payload.get("order") or []
+    if not isinstance(order, list):
+        raise HTTPException(status_code=400, detail="Invalid order")
+
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == on_date)
+        )
+    )
+    fixed_count = sum(1 for b in day_blocks if b.is_fixed)
+    movable_by_id = {b.id: b for b in day_blocks if not b.is_fixed}
+
+    next_slot = fixed_count
+    seen: set[int] = set()
+    for raw_id in order:
+        try:
+            bid = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        block = movable_by_id.get(bid)
+        if not block or bid in seen:
+            continue
+        block.slot_index = next_slot
+        next_slot += 1
+        seen.add(bid)
+
+    db.commit()
+    return _planner_day_payload(db, uid, on_date)
+
+
+def _ics_escape(text: str) -> str:
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\n", "\\n")
+    )
+
+
+def _ensure_calendar_token(db: Session, user: User) -> str:
+    if not user.calendar_token:
+        user.calendar_token = secrets.token_urlsafe(24)
+        db.commit()
+    return user.calendar_token
+
+
+@app.get("/study-planner/calendar/{user_id}.ics")
+def study_planner_calendar_ics(user_id: int, token: str = "", db: Session = Depends(get_db)):
+    # Subscribed to directly by external calendar apps (Google/Apple/Outlook),
+    # so this can't rely on the session cookie -- a per-user secret token instead.
+    user = db.get(User, user_id)
+    if not user or not user.calendar_token or not secrets.compare_digest(user.calendar_token, token):
+        raise HTTPException(status_code=404)
+
+    today = date.today()
+    range_start = today - timedelta(days=7)
+    range_end = today + timedelta(days=28)
+
+    seen_weeks: set[date] = set()
+    cursor = range_start
+    while cursor <= range_end:
+        week_start = study_planner.week_start_monday(cursor)
+        if week_start not in seen_weeks:
+            seen_weeks.add(week_start)
+            study_planner.ensure_week_blocks(db, user_id, cursor)
+        cursor += timedelta(days=7)
+    db.commit()
+
+    blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == user_id)
+            .where(StudyPlannerBlock.on_date >= range_start)
+            .where(StudyPlannerBlock.on_date <= range_end)
+            .where(StudyPlannerBlock.block_kind != "placeholder")
+            .order_by(StudyPlannerBlock.on_date, StudyPlannerBlock.slot_index)
+        )
+    )
+    subjects_by_id = {s.id: s for s in db.scalars(select(Subject))}
+    tzid = get_settings().app_timezone
+    now_stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//StudyMate//Study Planner//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:StudyMate Study Planner",
+        f"X-WR-TIMEZONE:{tzid}",
+    ]
+    for b in blocks:
+        subj = subjects_by_id.get(b.subject_id)
+        icon = f"{subj.icon} " if subj and subj.icon else ""
+        summary = f"{icon}{b.task_name or (subj.name if subj else 'Study block')}"
+        start_hm = b.start_time or "17:00"
+        start_dt = datetime.combine(b.on_date, time.fromisoformat(start_hm))
+        if b.end_time:
+            end_dt = datetime.combine(b.on_date, time.fromisoformat(b.end_time))
+        else:
+            end_dt = start_dt + timedelta(minutes=b.duration_minutes or 50)
+        desc_bits = [f"Subject: {subj.name}"] if subj else []
+        if b.is_fixed:
+            desc_bits.append("Fixed block")
+        if b.completed:
+            desc_bits.append("Completed in StudyMate")
+        lines.append("BEGIN:VEVENT")
+        lines.append(f"UID:studymate-block-{b.id}@studymate.local")
+        lines.append(f"DTSTAMP:{now_stamp}")
+        lines.append(f"DTSTART;TZID={tzid}:{start_dt.strftime('%Y%m%dT%H%M%S')}")
+        lines.append(f"DTEND;TZID={tzid}:{end_dt.strftime('%Y%m%dT%H%M%S')}")
+        lines.append(f"SUMMARY:{_ics_escape(summary)}")
+        lines.append(f"DESCRIPTION:{_ics_escape(' / '.join(desc_bits) or 'Generated by StudyMate Study Planner')}")
+        lines.append(f"STATUS:{'CONFIRMED' if not b.completed else 'CONFIRMED'}")
+        lines.append("END:VEVENT")
+    lines.append("END:VCALENDAR")
+
+    body = "\r\n".join(lines) + "\r\n"
+    return Response(content=body, media_type="text/calendar; charset=utf-8")
+
+
+@app.post("/settings/calendar-token/regenerate")
+def settings_calendar_token_regenerate(request: Request, db: Session = Depends(get_db)):
+    uid = _uid(request)
+    user = db.get(User, uid)
+    if not user:
+        raise HTTPException(404)
+    user.calendar_token = secrets.token_urlsafe(24)
+    db.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.get("/study-planner", response_class=HTMLResponse)
+def study_planner_view(
+    request: Request,
+    on: str = "",
+    view: str = "timeline",
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    try:
+        on_date = date.fromisoformat(on) if on else date.today()
+    except ValueError:
+        on_date = date.today()
+
+    week_start = study_planner.week_start_monday(on_date)
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.commit()
+
+    week_blocks = study_planner.get_week_blocks(db, uid, week_start)
+    day_blocks = [b for b in week_blocks if b.on_date == on_date]
+    blocks_by_day: dict[date, list[StudyPlannerBlock]] = {week_start + timedelta(days=i): [] for i in range(7)}
+    for b in week_blocks:
+        blocks_by_day.setdefault(b.on_date, []).append(b)
+
+    subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+    subject_by_id = {s.id: s for s in subjects}
+
+    revision_state = study_planner.load_revision_desk_state(db, uid)
+    due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
+
+    due_cards_mapped: list[dict] = []
+    for c in due_cards:
+        sid = study_planner.map_due_card_subject_to_id(c, subjects)
+        due_cards_mapped.append(
+            {
+                "subject_id": sid,
+                "revision_subject_id": c.subject_id,
+                "revision_chapter_id": c.chapter_id,
+                "subject_name": c.subject_name,
+                "chapter_name": c.chapter_name,
+                "due_date": c.due_date,
+            }
+        )
+
+    linked_keys = {
+        f"{link.revision_subject_id}::{link.revision_chapter_id}"
+        for b in day_blocks
+        for link in b.revision_links
+    }
+
+    due_by_subject_id: dict[int, list[dict]] = {}
+    for card in due_cards_mapped:
+        sid = card["subject_id"]
+        if sid is None:
+            continue
+        due_by_subject_id.setdefault(sid, []).append(card)
+
+    weekly_totals = study_planner.weekly_subject_minutes(week_blocks)
+    day_required = [b for b in day_blocks if not b.is_optional]
+    day_completed = bool(day_required) and all(b.completed for b in day_required)
+    streak_days = study_planner.planner_streak_days(db, uid, date.today())
+
+    ctx = _common_ctx(request, db)
+    ctx.update(
+        {
+            "planner_on": on_date,
+            "planner_prev": on_date - timedelta(days=1),
+            "planner_next": on_date + timedelta(days=1),
+            "planner_week_start": week_start,
+            "planner_week_dates": [week_start + timedelta(days=i) for i in range(7)],
+            "planner_day_blocks": day_blocks,
+            "planner_blocks_by_day": blocks_by_day,
+            "planner_subjects": subjects,
+            "planner_subject_by_id": subject_by_id,
+            "planner_due_cards": due_cards_mapped,
+            "planner_due_by_subject_id": due_by_subject_id,
+            "planner_linked_keys": linked_keys,
+            "planner_weekly_totals": weekly_totals,
+            "planner_streak_days": streak_days,
+            "planner_day_completed": day_completed,
+            "planner_view": "week" if view == "week" else "timeline",
+        }
+    )
+    return templates.TemplateResponse("study_planner.html", ctx)
+
+
+@app.post("/study-planner/blocks/{block_id}/update")
+def study_planner_block_update(
+    block_id: int,
+    request: Request,
+    task_name: str = Form(""),
+    duration_minutes: int = Form(50),
+    subject_id: str = Form(""),
+    start_time: str = Form(""),
+    end_time: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+
+    block.task_name = task_name.strip()
+    block.duration_minutes = max(10, min(180, int(duration_minutes or 50)))
+    block.start_time = _normalize_planner_time(start_time)
+    block.end_time = _normalize_planner_time(end_time)
+
+    if not block.is_fixed:
+        block.subject_id = int(subject_id) if subject_id else None
+
+    db.commit()
+    return RedirectResponse(
+        request.headers.get("referer") or f"/study-planner?on={block.on_date.isoformat()}",
+        status_code=303,
+    )
+
+
+@app.post("/study-planner/blocks/{block_id}/toggle")
+def study_planner_block_toggle(
+    block_id: int,
+    request: Request,
+    completed: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+
+    now_completed = completed == "1"
+    was_completed = bool(block.completed)
+    block.completed = now_completed
+    block.completed_at = datetime.utcnow() if now_completed else None
+
+    if now_completed and not was_completed and block.revision_pushed_at is None:
+        pushed = study_planner.push_block_links_to_revision_state(db, uid, block)
+        if pushed > 0:
+            block.revision_pushed_at = datetime.utcnow()
+
+    db.commit()
+    return RedirectResponse(
+        request.headers.get("referer") or f"/study-planner?on={block.on_date.isoformat()}",
+        status_code=303,
+    )
+
+
+@app.post("/study-planner/blocks/{block_id}/move")
+def study_planner_block_move(
+    block_id: int,
+    request: Request,
+    direction: str = Form("up"),
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    if block.is_fixed:
+        return RedirectResponse(
+            request.headers.get("referer") or f"/study-planner?on={block.on_date.isoformat()}",
+            status_code=303,
+        )
+
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == block.on_date)
+            .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
+        )
+    )
+    movable = [b for b in day_blocks if not b.is_fixed]
+    try:
+        idx = [b.id for b in movable].index(block.id)
+    except ValueError:
+        idx = -1
+
+    if idx >= 0:
+        swap_idx = idx - 1 if direction == "up" else idx + 1
+        if 0 <= swap_idx < len(movable):
+            other = movable[swap_idx]
+            block.slot_index, other.slot_index = other.slot_index, block.slot_index
+
+    db.commit()
+    return RedirectResponse(
+        request.headers.get("referer") or f"/study-planner?on={block.on_date.isoformat()}",
+        status_code=303,
+    )
+
+
+@app.post("/study-planner/blocks/reorder")
+async def study_planner_blocks_reorder(request: Request, db: Session = Depends(get_db)):
+    """Drag-and-drop reorder for rotating blocks (fixed blocks always stay first)."""
+    uid = _uid(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    try:
+        on_date = date.fromisoformat(str(payload.get("on") or ""))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date")
+    order = payload.get("order") or []
+    if not isinstance(order, list):
+        raise HTTPException(status_code=400, detail="Invalid order")
+
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == on_date)
+        )
+    )
+    fixed_count = sum(1 for b in day_blocks if b.is_fixed)
+    movable_by_id = {b.id: b for b in day_blocks if not b.is_fixed}
+
+    next_slot = fixed_count
+    seen: set[int] = set()
+    for raw_id in order:
+        try:
+            bid = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        block = movable_by_id.get(bid)
+        if not block or bid in seen:
+            continue
+        block.slot_index = next_slot
+        next_slot += 1
+        seen.add(bid)
+
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/study-planner/blocks/{block_id}/pull-subject-due")
+def study_planner_pull_subject_due(
+    block_id: int,
+    request: Request,
+    on: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    block = db.get(StudyPlannerBlock, block_id)
+    if not block or block.owner_id != uid:
+        raise HTTPException(404)
+    if not block.subject_id:
+        return RedirectResponse(
+            request.headers.get("referer") or f"/study-planner?on={block.on_date.isoformat()}",
+            status_code=303,
+        )
+
+    on_date = block.on_date
+    if on:
+        try:
+            on_date = date.fromisoformat(on)
+        except ValueError:
+            on_date = block.on_date
+
+    subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+    revision_state = study_planner.load_revision_desk_state(db, uid)
+    due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
+
+    added = False
+    for card in due_cards:
+        sid = study_planner.map_due_card_subject_to_id(card, subjects)
+        if sid != block.subject_id:
+            continue
+        added = study_planner.add_due_link_to_block(db, block, card) or added
+
+    if added and not block.task_name.strip():
+        subj = db.get(Subject, block.subject_id)
+        if subj:
+            block.task_name = f"{subj.name}: due revision cards"
+
+    db.commit()
+    return RedirectResponse(
+        request.headers.get("referer") or f"/study-planner?on={on_date.isoformat()}",
+        status_code=303,
+    )
+
+
+@app.post("/study-planner/add-due")
+def study_planner_add_due_to_day(
+    request: Request,
+    on: str = Form(...),
+    revision_subject_id: str = Form(...),
+    revision_chapter_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    uid = _uid(request)
+    try:
+        on_date = date.fromisoformat(on)
+    except ValueError:
+        on_date = date.today()
+
+    subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
+    revision_state = study_planner.load_revision_desk_state(db, uid)
+    due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
+    due_card = next(
+        (
+            c
+            for c in due_cards
+            if c.subject_id == revision_subject_id and c.chapter_id == revision_chapter_id
+        ),
+        None,
+    )
+    if not due_card:
+        return RedirectResponse(f"/study-planner?on={on_date.isoformat()}", status_code=303)
+
+    mapped_subject_id = study_planner.map_due_card_subject_to_id(due_card, subjects)
+    if mapped_subject_id is None:
+        return RedirectResponse(f"/study-planner?on={on_date.isoformat()}", status_code=303)
+
+    study_planner.ensure_week_blocks(db, uid, on_date)
+    db.flush()
+
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == on_date)
+            .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
+        )
+    )
+    target = next(
+        (
+            b
+            for b in day_blocks
+            if (not b.is_fixed) and b.subject_id == mapped_subject_id
+        ),
+        None,
+    )
+
+    if target is None:
+        max_slot = max((b.slot_index for b in day_blocks), default=-1)
+        subj = db.get(Subject, mapped_subject_id)
+        target = StudyPlannerBlock(
+            owner_id=uid,
+            on_date=on_date,
+            slot_index=max_slot + 1,
+            block_kind="rotating",
+            subject_id=mapped_subject_id,
+            task_name=f"{subj.name if subj else 'Subject'}: due revision cards",
+            duration_minutes=50,
+            is_fixed=False,
+            is_optional=False,
+        )
+        db.add(target)
+        db.flush()
+
+    study_planner.add_due_link_to_block(db, target, due_card)
+    db.commit()
+    return RedirectResponse(f"/study-planner?on={on_date.isoformat()}", status_code=303)
+
+
 # ---------- auth: login / logout ----------
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2056,6 +3150,10 @@ def admin_user_delete(user_id: int, request: Request, db: Session = Depends(get_
         db.query(StudySession).filter(StudySession.owner_id == user_id).delete()
         db.query(NoteFile).filter(NoteFile.owner_id == user_id).delete()
         db.query(ChatMessage).filter(ChatMessage.owner_id == user_id).delete()
+        db.query(StudyPlannerRevisionLink).filter(StudyPlannerRevisionLink.block_id.in_(
+            select(StudyPlannerBlock.id).where(StudyPlannerBlock.owner_id == user_id)
+        )).delete(synchronize_session=False)
+        db.query(StudyPlannerBlock).filter(StudyPlannerBlock.owner_id == user_id).delete()
         db.query(Task).filter(Task.owner_id == user_id).delete()
         db.query(Deadline).filter(Deadline.owner_id == user_id).delete()
         db.query(AvailabilityRule).filter(AvailabilityRule.owner_id == user_id).delete()

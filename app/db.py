@@ -56,6 +56,12 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("note_files", "owner_id", "INTEGER NULL REFERENCES users(id)"),
     ("chat_messages", "owner_id", "INTEGER NULL REFERENCES users(id)"),
     ("chat_messages", "session_id", "INTEGER NULL REFERENCES chat_sessions(id)"),
+    ("study_planner_blocks", "start_time", "VARCHAR(5) NULL"),
+    ("study_planner_blocks", "end_time", "VARCHAR(5) NULL"),
+    ("study_planner_blocks", "carried_forward", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("study_planner_blocks", "carried_from_id", "INTEGER NULL"),
+    ("users", "calendar_token", "VARCHAR(64) NOT NULL DEFAULT ''"),
+    ("study_planner_blocks", "source_rule_id", "INTEGER NULL"),
 ]
 
 

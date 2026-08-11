@@ -20,6 +20,7 @@ SUBJECTS = [
     ("Biology",              "HL",   "#10b981", "🧬",  20),
     ("Chemistry",            "SL",   "#06b6d4", "⚗️",  30),
     ("English Lang & Lit",   "HL",   "#f59e0b", "📖",  40),
+    ("Visual Arts",          "SL",   "#f472b6", "🎨",  45),
     ("Business Management",  "HL",   "#ec4899", "💼",  50),
     ("Arabic ab initio",     "SL",   "#84cc16", "🕌",  60),
     # Row 2 — IB core components (CAS second-row per request)

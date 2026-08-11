@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Study Planner · Maznify{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <section class="bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-slate-200">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-xl sm:text-2xl font-semibold">Daily Study Planner</h1>
+        <p class="text-xs sm:text-sm text-slate-500 mt-1">Linked with Revision Desk due cards in both directions.</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+        <a class="px-2.5 py-1.5 rounded border hover:bg-slate-50" href="/study-planner?on={{ planner_prev.isoformat() }}&view={{ planner_view }}">← Prev</a>
+        <a class="px-2.5 py-1.5 rounded border hover:bg-slate-50" href="/study-planner">Today</a>
+        <a class="px-2.5 py-1.5 rounded border hover:bg-slate-50" href="/study-planner?on={{ planner_next.isoformat() }}&view={{ planner_view }}">Next →</a>
+        <input type="date" value="{{ planner_on.isoformat() }}" class="px-2 py-1.5 rounded border"
+          onchange="if(this.value){location.href='/study-planner?on='+this.value+'&view={{ planner_view }}'}" />
+      </div>
+    </div>
+
+    <div class="mt-4 flex flex-wrap items-center gap-2">
+      <a href="/study-planner?on={{ planner_on.isoformat() }}&view=timeline"
+         class="px-3 py-1.5 rounded-full text-sm {% if planner_view == 'timeline' %}bg-teal-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+        Daily Timeline
+      </a>
+      <a href="/study-planner?on={{ planner_on.isoformat() }}&view=week"
+         class="px-3 py-1.5 rounded-full text-sm {% if planner_view == 'week' %}bg-teal-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+        Weekly Grid
+      </a>
+      <span class="ml-auto text-xs sm:text-sm px-2.5 py-1.5 rounded-full {% if planner_day_completed %}bg-emerald-100 text-emerald-700{% else %}bg-amber-100 text-amber-700{% endif %}">
+        {% if planner_day_completed %}All required blocks completed{% else %}Blocks remaining today{% endif %}
+      </span>
+      <span class="text-xs sm:text-sm px-2.5 py-1.5 rounded-full bg-indigo-100 text-indigo-700">Streak: {{ planner_streak_days }} day{% if planner_streak_days != 1 %}s{% endif %}</span>
+    </div>
+  </section>
+
+  {% if planner_view == 'timeline' %}
+    <section class="grid lg:grid-cols-3 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-slate-200">
+        <h2 class="text-lg font-semibold mb-3">{{ planner_on.strftime('%A, %d %b %Y') }}</h2>
+
+        {% if not planner_day_blocks %}
+          <div class="text-sm text-slate-500">No blocks generated for this day yet.</div>
+        {% endif %}
+
+        {% set fixed_blocks = planner_day_blocks | selectattr('is_fixed') | list %}
+        {% set rotating_blocks = planner_day_blocks | rejectattr('is_fixed') | list %}
+
+        {% macro render_block(b, draggable=false) %}
+          {% set subject = planner_subject_by_id.get(b.subject_id) if b.subject_id else none %}
+          <article id="block-{{ b.id }}" data-block-id="{{ b.id }}"
+            class="rounded-lg border bg-white overflow-hidden {% if b.is_fixed %}border-l-4 border-l-indigo-500{% else %}border-l-4 border-l-teal-400{% endif %} {% if b.completed %}opacity-80{% endif %}">
+            <div class="p-3 sm:p-4">
+              <div class="flex items-start gap-3">
+                {% if draggable %}
+                  <span class="drag-handle shrink-0 w-6 h-9 flex items-center justify-center text-slate-400 cursor-grab active:cursor-grabbing select-none text-lg touch-none" title="Drag to reorder">⠿</span>
+                {% endif %}
+                <form method="post" action="/study-planner/blocks/{{ b.id }}/toggle" class="pt-0.5">
+                  <input type="hidden" name="completed" value="{% if b.completed %}0{% else %}1{% endif %}" />
+                  <button class="w-5 h-5 rounded border-2 {% if b.completed %}bg-emerald-500 border-emerald-600 text-white{% else %}border-slate-300 bg-white{% endif %}" title="Toggle complete">{% if b.completed %}✓{% endif %}</button>
+                </form>
+
+                <div class="flex-1 min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="font-semibold text-sm sm:text-base {% if b.completed %}line-through text-slate-500{% endif %}">{{ b.task_name or 'Study block' }}</h3>
+                    {% if b.is_fixed %}
+                      <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded bg-indigo-100 text-indigo-700">Fixed</span>
+                    {% elif b.is_optional %}
+                      <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded bg-slate-100 text-slate-700">Optional</span>
+                    {% else %}
+                      <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded bg-teal-100 text-teal-700">Rotating</span>
+                    {% endif %}
+                    {% if b.revision_links %}
+                      <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded bg-cyan-100 text-cyan-700">Linked to due cards</span>
+                    {% endif %}
+                  </div>
+
+                  <p class="text-xs sm:text-sm text-slate-500 mt-1">
+                    {% if subject %}{{ subject.icon or '📚' }} {{ subject.name }}{% else %}No subject{% endif %}
+                    · {{ b.duration_minutes }} min
+                    {% if b.start_time %}· 🕐 {{ b.start_time }}{% if b.end_time %}–{{ b.end_time }}{% endif %}{% endif %}
+                  </p>
+
+                  {% if b.revision_links %}
+                    <div class="mt-2 text-xs text-cyan-800 bg-cyan-50 border border-cyan-100 rounded p-2">
+                      <div class="font-medium mb-1">Linked due cards</div>
+                      <ul class="space-y-1">
+                        {% for link in b.revision_links %}
+                          <li>• {{ link.revision_chapter_name }} <span class="text-cyan-600">(due {{ link.due_date }})</span></li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  {% endif %}
+
+                  <div class="mt-3">
+                    <details>
+                      <summary class="cursor-pointer text-xs sm:text-sm text-slate-600 hover:text-slate-800">Edit block</summary>
+                      <form method="post" action="/study-planner/blocks/{{ b.id }}/update" class="mt-2 grid sm:grid-cols-4 gap-2 items-end">
+                        <label class="sm:col-span-2 text-xs text-slate-600">Task name
+                          <input name="task_name" value="{{ b.task_name }}" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" placeholder="Task name" />
+                        </label>
+                        <label class="text-xs text-slate-600">Minutes
+                          <input type="number" min="10" max="180" name="duration_minutes" value="{{ b.duration_minutes }}" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+                        </label>
+                        <label class="text-xs text-slate-600">Subject
+                          <select name="subject_id" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" {% if b.is_fixed %}disabled{% endif %}>
+                            <option value="">No subject</option>
+                            {% for s in planner_subjects %}
+                              <option value="{{ s.id }}" {% if b.subject_id == s.id %}selected{% endif %}>{{ s.icon or '📚' }} {{ s.name }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                        <label class="text-xs text-slate-600">Start time
+                          <input type="time" name="start_time" value="{{ b.start_time or '' }}" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+                        </label>
+                        <label class="text-xs text-slate-600">End time
+                          <input type="time" name="end_time" value="{{ b.end_time or '' }}" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+                        </label>
+                        <div class="sm:col-span-4 flex flex-wrap gap-2 pt-1">
+                          <button class="px-3 py-1.5 rounded bg-teal-600 text-white text-xs sm:text-sm">Save</button>
+                        </div>
+                      </form>
+
+                      {% if not b.is_fixed %}
+                        <div class="mt-2 flex flex-wrap gap-2">
+                          <form method="post" action="/study-planner/blocks/{{ b.id }}/move">
+                            <input type="hidden" name="direction" value="up" />
+                            <button class="px-2.5 py-1 rounded border text-xs">Move up</button>
+                          </form>
+                          <form method="post" action="/study-planner/blocks/{{ b.id }}/move">
+                            <input type="hidden" name="direction" value="down" />
+                            <button class="px-2.5 py-1 rounded border text-xs">Move down</button>
+                          </form>
+                          {% if b.subject_id %}
+                            <form method="post" action="/study-planner/blocks/{{ b.id }}/pull-subject-due">
+                              <input type="hidden" name="on" value="{{ planner_on.isoformat() }}" />
+                              <button class="px-2.5 py-1 rounded border bg-cyan-50 text-cyan-700 text-xs">Pull due cards for this subject</button>
+                            </form>
+                          {% endif %}
+                        </div>
+                      {% endif %}
+                    </details>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+        {% endmacro %}
+
+        <div class="space-y-3">
+          {% for b in fixed_blocks %}{{ render_block(b, false) }}{% endfor %}
+        </div>
+
+        {% if rotating_blocks %}
+          <p class="text-[11px] text-slate-400 mt-4 mb-1 flex items-center gap-1">
+            <span>⠿</span> Drag the handle to reorder rotating blocks — fixed blocks always stay first.
+          </p>
+          <div id="rotatingBlocksList" class="space-y-3">
+            {% for b in rotating_blocks %}{{ render_block(b, true) }}{% endfor %}
+          </div>
+        {% endif %}
+      </div>
+
+      <aside class="space-y-4">
+        <section class="bg-white rounded-xl shadow-sm p-4 border border-slate-200">
+          <h3 class="font-semibold text-sm mb-2">Revision Desk due today</h3>
+          {% if not planner_due_cards %}
+            <p class="text-xs text-slate-500">No due cards found for this date.</p>
+          {% else %}
+            <ul class="space-y-2">
+              {% for card in planner_due_cards %}
+                {% set key = card.revision_subject_id ~ '::' ~ card.revision_chapter_id %}
+                <li class="text-xs rounded border p-2 {% if key in planner_linked_keys %}bg-emerald-50 border-emerald-200{% else %}bg-slate-50 border-slate-200{% endif %}">
+                  <div class="font-medium text-slate-700">{{ card.chapter_name }}</div>
+                  <div class="text-slate-500">{{ card.subject_name }} · due {{ card.due_date }}</div>
+                  {% if key in planner_linked_keys %}
+                    <div class="mt-1 text-emerald-700">Already in today's plan</div>
+                  {% else %}
+                    <form method="post" action="/study-planner/add-due" class="mt-1">
+                      <input type="hidden" name="on" value="{{ planner_on.isoformat() }}" />
+                      <input type="hidden" name="revision_subject_id" value="{{ card.revision_subject_id }}" />
+                      <input type="hidden" name="revision_chapter_id" value="{{ card.revision_chapter_id }}" />
+                      <button class="px-2.5 py-1 rounded bg-cyan-600 text-white">Add to today's plan</button>
+                    </form>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </section>
+
+        <section class="bg-white rounded-xl shadow-sm p-4 border border-slate-200">
+          <h3 class="font-semibold text-sm mb-2">How sync works</h3>
+          <ul class="text-xs text-slate-600 space-y-1">
+            <li>1. Add a due card to a block from the list above or with Pull due cards in a block.</li>
+            <li>2. When that block is checked complete, only its linked due cards are marked reviewed in Revision Desk.</li>
+            <li>3. Free-form blocks without linked due cards never change unrelated revision cards.</li>
+          </ul>
+        </section>
+      </aside>
+    </section>
+  {% else %}
+    <section class="space-y-5">
+      <div class="bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-slate-200">
+        <h2 class="text-lg font-semibold mb-3">Weekly Grid (Mon-Sun)</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {% for day_date in planner_week_dates %}
+            {% set day_blocks = planner_blocks_by_day.get(day_date, []) %}
+            {% set day_required = day_blocks | rejectattr('is_optional') | list %}
+            {% set required_count = day_required | length %}
+            {% set completed_count = day_required | selectattr('completed') | list | length %}
+            {% set done = required_count > 0 and completed_count == required_count %}
+            <a href="/study-planner?on={{ day_date.isoformat() }}&view=timeline"
+               class="block rounded-lg border p-3 hover:shadow-sm transition {% if day_date == planner_on %}border-teal-400 bg-teal-50{% else %}border-slate-200 bg-white{% endif %}">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs text-slate-500">{{ day_date.strftime('%a') }}</div>
+                  <div class="font-semibold text-sm">{{ day_date.strftime('%d %b') }}</div>
+                </div>
+                <span class="text-[11px] px-2 py-0.5 rounded-full {% if done %}bg-emerald-100 text-emerald-700{% else %}bg-amber-100 text-amber-700{% endif %}">
+                  {% if done %}Done{% else %}Open{% endif %}
+                </span>
+              </div>
+
+              <div class="mt-2 space-y-1">
+                {% for b in day_blocks[:4] %}
+                  {% set subject = planner_subject_by_id.get(b.subject_id) if b.subject_id else none %}
+                  <div class="text-xs rounded px-2 py-1 {% if b.block_kind in ['fixed_arabic','fixed_ucat'] %}bg-indigo-50 text-indigo-700 border border-indigo-100{% else %}bg-slate-50 text-slate-700 border border-slate-100{% endif %}">
+                    {{ subject.name if subject else b.task_name }} · {{ b.duration_minutes }}m
+                  </div>
+                {% endfor %}
+                {% if day_blocks|length > 4 %}
+                  <div class="text-[11px] text-slate-500">+{{ day_blocks|length - 4 }} more</div>
+                {% endif %}
+              </div>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-slate-200">
+        <h3 class="text-base font-semibold mb-3">Weekly subject time totals</h3>
+        <div class="space-y-2">
+          {% set max_total = (planner_weekly_totals.values() | max) if planner_weekly_totals else 1 %}
+          {% for s in planner_subjects %}
+            {% set mins = planner_weekly_totals.get(s.id, 0) %}
+            <div>
+              <div class="flex items-center justify-between text-xs sm:text-sm mb-1">
+                <span>{{ s.icon or '📚' }} {{ s.name }}</span>
+                <span class="text-slate-500">{{ mins }} min</span>
+              </div>
+              <div class="h-2 rounded bg-slate-100 overflow-hidden">
+                <div class="h-2" style="width: {% if max_total > 0 %}{{ ((mins * 100) // max_total) }}{% else %}0{% endif %}%; background: {{ s.color }}"></div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+  {% endif %}
+</div>
+
+{% if planner_view == 'timeline' %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+(function () {
+  var list = document.getElementById('rotatingBlocksList');
+  if (!list || typeof Sortable === 'undefined') return;
+  new Sortable(list, {
+    animation: 150,
+    handle: '.drag-handle',
+    dataIdAttr: 'data-block-id',
+    onEnd: function () {
+      var order = Array.from(list.children).map(function (el) { return el.getAttribute('data-block-id'); });
+      fetch('/study-planner/blocks/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: '{{ planner_on.isoformat() }}', order: order }),
+      }).then(function (res) {
+        if (!res.ok) location.reload();
+      }).catch(function () { location.reload(); });
+    },
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -165,6 +165,41 @@
   </form>
 </div>
 
+<!-- ===== Calendar sync ===== -->
+<div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+  <h2 class="text-xl font-semibold mb-1">Sync to your calendar</h2>
+  <p class="text-xs text-slate-500 mb-4">
+    Subscribe to your Study Planner as a live calendar feed. It works with Google Calendar, Apple Calendar
+    and Outlook, and refreshes automatically as your plan changes (Google typically re-checks the feed every
+    few hours) &mdash; no Google sign-in or app permissions needed.
+  </p>
+
+  {% set calendar_url = request.url.scheme + '://' + request.url.netloc + calendar_ics_path %}
+  <div class="flex flex-wrap items-center gap-2 mb-3">
+    <input id="calendar-ics-url" type="text" readonly value="{{ calendar_url }}"
+           class="flex-1 min-w-[16rem] border rounded px-3 py-2 text-xs font-mono bg-slate-50" />
+    <button type="button" onclick="
+        navigator.clipboard.writeText(document.getElementById('calendar-ics-url').value);
+        this.textContent='Copied!'; setTimeout(() => this.textContent='Copy link', 1500);
+      " class="px-3 py-2 text-xs bg-indigo-600 text-white rounded">Copy link</button>
+    <form method="post" action="/settings/calendar-token/regenerate"
+          onsubmit="return confirm('This invalidates your current calendar link and any calendars already subscribed to it will stop updating. Continue?');">
+      <button class="px-3 py-2 text-xs bg-slate-100 text-slate-700 rounded">Regenerate link</button>
+    </form>
+  </div>
+
+  <details class="text-xs text-slate-500">
+    <summary class="cursor-pointer text-indigo-600 font-medium">How do I add this to Google Calendar?</summary>
+    <ol class="list-decimal list-inside mt-2 space-y-1">
+      <li>Copy the link above.</li>
+      <li>In Google Calendar, go to <strong>Other calendars</strong> → <strong>+</strong> → <strong>From URL</strong>.</li>
+      <li>Paste the link and click <strong>Add calendar</strong>.</li>
+    </ol>
+    <p class="mt-2">On Apple Calendar: <strong>File → New Calendar Subscription</strong>. On Outlook: <strong>Add calendar → Subscribe from web</strong>.</p>
+    <p class="mt-2 text-amber-700">Keep this link private &mdash; anyone with it can view your study schedule.</p>
+  </details>
+</div>
+
 <!-- ===== Subject appearance ===== -->
 <div class="bg-white rounded-xl shadow-sm p-5">
   <h2 class="text-xl font-semibold mb-1">Subject appearance</h2>

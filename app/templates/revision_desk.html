@@ -302,6 +302,7 @@
 <div class="toast" id="toast"></div>
 <div id="saveIndicator" class="save-indicator"><span class="save-dot"></span>Saving — don't refresh yet…</div>
 
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
 const API_STATE = '/revision-desk/state';
 const ACTIVE_TAB_KEY = 'revisionDeskActiveTab';
@@ -309,6 +310,17 @@ const INTERVALS = [2, 4, 7, 14, 30]; // days per box level (0-indexed, 5 levels)
 let data = { subjects: [] };
 let loaded = false;
 let activeTab = 'today';
+
+// Study Planner (merged tab) state
+let plannerOn = null;
+let plannerViewMode = 'timeline';
+let plannerDayData = null;
+let plannerWeekData = null;
+let plannerLoading = false;
+let plannerEditingBlocks = new Set();
+let plannerCarryPrompts = new Set();
+let plannerAddingBlock = false;
+let plannerSortableInstance = null;
 
 const TAB_COLORS = [
   '#3F51B5', // indigo
@@ -1110,13 +1122,30 @@ function setTab(tab){
   searchQuery = '';
   const searchInput = document.getElementById('searchInput');
   if(searchInput) searchInput.value = '';
-  render();
+  if(tab === 'planner'){
+    if(!plannerOn) plannerOn = todayStr();
+    plannerRefresh();
+  } else {
+    render();
+  }
 }
 
 function formatDateDay(dateStr){
   if(!dateStr) return 'Not yet';
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+}
+
+function formatTime12h(hhmm){
+  if(!hhmm) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2,'0')}${period}`;
+}
+function formatTimeRange(start, end){
+  if(start && end) return `${formatTime12h(start)}\u2013${formatTime12h(end)}`;
+  return formatTime12h(start || end);
 }
 
 function statusColor(dueDate, isBacklog){
@@ -1212,6 +1241,562 @@ function copyFlashcards(){
   navigator.clipboard.writeText(content).then(() => showToast('Flashcards copied to clipboard.'), () => showToast('Copy failed. Try again manually.'));
 }
 
+function sendToPlanner(sid, cid, targetDate){
+  // Jump straight into the Study Planner tab (in-page, no reload) and pull this card in.
+  activeTab = 'planner';
+  if(typeof localStorage !== 'undefined'){
+    try{ localStorage.setItem(ACTIVE_TAB_KEY, 'planner'); }catch(_){ }
+  }
+  searchQuery = '';
+  const searchInput = document.getElementById('searchInput');
+  if(searchInput) searchInput.value = '';
+  plannerOn = targetDate;
+  render();
+  plannerAddDue(sid, cid);
+}
+
+async function plannerRefresh(){
+  plannerLoading = true;
+  render();
+  try{
+    const [dayRes, weekRes] = await Promise.all([
+      fetch(`/study-planner/api/day?on=${plannerOn}`, { credentials: 'include' }),
+      fetch(`/study-planner/api/week?on=${plannerOn}`, { credentials: 'include' }),
+    ]);
+    if(dayRes.ok) plannerDayData = await dayRes.json();
+    if(weekRes.ok) plannerWeekData = await weekRes.json();
+  }catch(e){
+    console.error('planner refresh failed', e);
+    showToast('Could not load Study Planner. Try again.');
+  } finally {
+    plannerLoading = false;
+    render();
+  }
+}
+
+function plannerGoto(dateStr){
+  plannerOn = dateStr;
+  plannerRefresh();
+}
+
+function setPlannerView(mode){
+  plannerViewMode = mode;
+  render();
+}
+
+async function plannerToggleBlock(blockId, completed){
+  try{
+    const res = await fetch(`/study-planner/api/blocks/${blockId}/toggle`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed }),
+    });
+    if(!res.ok) throw new Error('toggle failed');
+  }catch(e){ showToast('Could not update that block. Try again.'); }
+  plannerRefresh();
+}
+
+function plannerToggleEditBlock(blockId){
+  if(plannerEditingBlocks.has(blockId)) plannerEditingBlocks.delete(blockId);
+  else plannerEditingBlocks.add(blockId);
+  render();
+}
+
+async function plannerSaveBlock(blockId){
+  const taskEl = document.getElementById(`planner-taskname-${blockId}`);
+  const minsEl = document.getElementById(`planner-minutes-${blockId}`);
+  const subjEl = document.getElementById(`planner-subject-${blockId}`);
+  const startEl = document.getElementById(`planner-start-${blockId}`);
+  const endEl = document.getElementById(`planner-end-${blockId}`);
+  const fixedEl = document.getElementById(`planner-fixed-${blockId}`);
+  const body = {
+    task_name: taskEl ? taskEl.value : '',
+    duration_minutes: minsEl ? (parseInt(minsEl.value, 10) || 50) : 50,
+    subject_id: subjEl ? subjEl.value : '',
+    start_time: startEl ? startEl.value : '',
+    end_time: endEl ? endEl.value : '',
+    is_fixed: fixedEl ? fixedEl.checked : false,
+  };
+  try{
+    const res = await fetch(`/study-planner/api/blocks/${blockId}/update`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if(!res.ok) throw new Error('update failed');
+    showToast('Block updated.');
+  }catch(e){ showToast('Could not save that block. Try again.'); }
+  plannerEditingBlocks.delete(blockId);
+  plannerRefresh();
+}
+
+async function plannerMoveBlock(blockId, direction){
+  try{
+    const res = await fetch(`/study-planner/api/blocks/${blockId}/move`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction }),
+    });
+    if(!res.ok) throw new Error('move failed');
+  }catch(e){ showToast('Could not reorder that block. Try again.'); }
+  plannerRefresh();
+}
+
+async function plannerPullSubjectDue(blockId){
+  try{
+    const res = await fetch(`/study-planner/api/blocks/${blockId}/pull-subject-due`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: plannerOn }),
+    });
+    if(!res.ok) throw new Error('pull failed');
+    showToast('Pulled due cards into this block.');
+  }catch(e){ showToast('Could not pull due cards. Try again.'); }
+  plannerRefresh();
+}
+
+async function plannerAddDue(revisionSubjectId, revisionChapterId){
+  try{
+    const res = await fetch('/study-planner/api/add-due', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: plannerOn, revision_subject_id: revisionSubjectId, revision_chapter_id: revisionChapterId }),
+    });
+    if(!res.ok) throw new Error('add-due failed');
+    showToast("Added to this day's plan.");
+  }catch(e){ showToast('Could not add that due card. Try again.'); }
+  plannerRefresh();
+}
+
+async function plannerReorder(order){
+  try{
+    const res = await fetch('/study-planner/api/blocks/reorder', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: plannerOn, order }),
+    });
+    if(!res.ok) throw new Error('reorder failed');
+  }catch(e){ showToast('Could not save the new order. Try again.'); }
+  plannerRefresh();
+}
+
+function initPlannerSortable(){
+  const list = document.getElementById('plannerRotatingList');
+  if(plannerSortableInstance){ plannerSortableInstance.destroy(); plannerSortableInstance = null; }
+  if(!list || typeof Sortable === 'undefined') return;
+  plannerSortableInstance = new Sortable(list, {
+    animation: 150,
+    handle: '.planner-drag-handle',
+    onEnd: function(){
+      const order = Array.from(list.children).map(el => el.getAttribute('data-block-id'));
+      plannerReorder(order);
+    },
+  });
+}
+
+function plannerDeleteBlock(blockId){
+  showConfirm('Remove this block from the day? This can\'t be undone.', async () => {
+    try{
+      const res = await fetch(`/study-planner/api/blocks/${blockId}/delete`, {
+        method: 'POST', credentials: 'include',
+      });
+      if(!res.ok) throw new Error('delete failed');
+      showToast('Block removed.');
+    }catch(e){ showToast('Could not remove that block. Try again.'); }
+    plannerEditingBlocks.delete(blockId);
+    plannerRefresh();
+  });
+}
+
+function plannerToggleCarryPrompt(blockId){
+  if(plannerCarryPrompts.has(blockId)) plannerCarryPrompts.delete(blockId);
+  else plannerCarryPrompts.add(blockId);
+  render();
+}
+
+async function plannerCarryOver(blockId){
+  const minsEl = document.getElementById(`planner-carry-mins-${blockId}`);
+  const remaining_minutes = minsEl ? (parseInt(minsEl.value, 10) || 50) : 50;
+  try{
+    const res = await fetch(`/study-planner/api/blocks/${blockId}/carry-over`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remaining_minutes }),
+    });
+    if(!res.ok) throw new Error('carry-over failed');
+    showToast("Marked as done for today \u2014 the rest moved to tomorrow's plan.");
+  }catch(e){ showToast('Could not carry that block over. Try again.'); }
+  plannerCarryPrompts.delete(blockId);
+  plannerRefresh();
+}
+
+function plannerToggleAddBlock(){
+  plannerAddingBlock = !plannerAddingBlock;
+  render();
+}
+
+async function plannerSaveNewBlock(){
+  const taskEl = document.getElementById('planner-new-taskname');
+  const minsEl = document.getElementById('planner-new-minutes');
+  const subjEl = document.getElementById('planner-new-subject');
+  const startEl = document.getElementById('planner-new-start');
+  const endEl = document.getElementById('planner-new-end');
+  const fixedEl = document.getElementById('planner-new-fixed');
+  const repeatEl = document.getElementById('planner-new-repeat');
+  const repeat = repeatEl ? repeatEl.value : '';
+
+  if(repeat){
+    const body = {
+      on: plannerOn,
+      task_name: taskEl ? taskEl.value : '',
+      duration_minutes: minsEl ? (parseInt(minsEl.value, 10) || 50) : 50,
+      subject_id: subjEl ? subjEl.value : '',
+      start_time: startEl ? startEl.value : '',
+      weekday: repeat,
+    };
+    try{
+      const res = await fetch('/study-planner/api/fixed-rules/add', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if(!res.ok) throw new Error('add failed');
+      showToast('Recurring fixed block added.');
+    }catch(e){ showToast('Could not add that recurring block. Try again.'); }
+    plannerAddingBlock = false;
+    plannerRefresh();
+    return;
+  }
+
+  const body = {
+    on: plannerOn,
+    task_name: taskEl ? taskEl.value : '',
+    duration_minutes: minsEl ? (parseInt(minsEl.value, 10) || 50) : 50,
+    subject_id: subjEl ? subjEl.value : '',
+    start_time: startEl ? startEl.value : '',
+    end_time: endEl ? endEl.value : '',
+    is_fixed: fixedEl ? fixedEl.checked : false,
+  };
+  try{
+    const res = await fetch('/study-planner/api/blocks/add', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if(!res.ok) throw new Error('add failed');
+    showToast('Block added.');
+  }catch(e){ showToast('Could not add that block. Try again.'); }
+  plannerAddingBlock = false;
+  plannerRefresh();
+}
+
+function plannerDeleteFixedRule(ruleId){
+  showConfirm('Remove this recurring fixed block? Any not-yet-completed upcoming occurrences will be removed too.', async () => {
+    try{
+      const res = await fetch(`/study-planner/api/fixed-rules/${ruleId}/delete`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: plannerOn }),
+      });
+      if(!res.ok) throw new Error('delete failed');
+      showToast('Recurring fixed block removed.');
+    }catch(e){ showToast('Could not remove that recurring block. Try again.'); }
+    plannerRefresh();
+  });
+}
+
+function plannerBlockHtml(b, subjectsById, draggable){
+  const subject = b.subject_id ? subjectsById[b.subject_id] : null;
+  const isEditing = plannerEditingBlocks.has(b.id);
+  const kindBadge = b.is_fixed
+    ? '<span class="priority-tag" style="background:#3730a3;">Fixed</span>'
+    : b.is_optional
+      ? '<span class="priority-tag" style="background:#64748b;">Optional</span>'
+      : '<span class="priority-tag" style="background:#0f766e;">Rotating</span>';
+  const linkedBadge = b.revision_links.length
+    ? '<span class="priority-tag" style="background:#0369a1;">Linked</span>'
+    : '';
+  const carriedBadge = b.carried_forward
+    ? '<span class="priority-tag" style="background:#b45309;">\u21bb Continued tomorrow</span>'
+    : '';
+  const continuedFromBadge = b.carried_from_id
+    ? '<span class="priority-tag" style="background:#0891b2;">\u21bb Continued from yesterday</span>'
+    : '';
+  const recurringBadge = b.source_rule_id
+    ? '<span class="priority-tag" style="background:#6d28d9;">\ud83d\udd01 Recurring</span>'
+    : '';
+  const linksHtml = b.revision_links.length
+    ? `<div style="margin-top:8px; font-size:11px; background:#ecfeff; border:1px solid #cffafe; border-radius:8px; padding:8px;">
+        <div style="font-weight:700; margin-bottom:4px; color:#0e7490;">Linked due cards</div>
+        ${b.revision_links.map(l => `<div>\u2022 ${escapeHtml(l.revision_chapter_name)} <span style="color:#0891b2;">(due ${formatDateDay(l.due_date)})</span></div>`).join('')}
+      </div>`
+    : '';
+  const subjectOptions = Object.values(subjectsById).map(s =>
+    `<option value="${s.id}" ${b.subject_id === s.id ? 'selected' : ''}>${s.icon || '\ud83d\udcda'} ${escapeHtml(s.name)}</option>`
+  ).join('');
+  const timeBadge = (b.start_time || b.end_time)
+    ? ` \u00b7 \ud83d\udd50 ${formatTimeRange(b.start_time, b.end_time)}`
+    : '';
+
+  const editBlock = isEditing ? `
+    <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; background:#fafafa; border:1px solid var(--line); border-radius:8px; padding:10px;">
+      <label style="font-size:11px; color:#5f6368; flex:1; min-width:160px;">Task name
+        <input type="text" id="planner-taskname-${b.id}" value="${escapeHtml(b.task_name)}" style="display:block; width:100%; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Minutes
+        <input type="number" min="10" max="180" id="planner-minutes-${b.id}" value="${b.duration_minutes}" style="display:block; width:80px; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Start time
+        <input type="time" id="planner-start-${b.id}" value="${b.start_time || ''}" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">End time
+        <input type="time" id="planner-end-${b.id}" value="${b.end_time || ''}" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Subject
+        <select id="planner-subject-${b.id}" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+          <option value="">No subject</option>
+          ${subjectOptions}
+        </select>
+      </label>
+      <label style="font-size:11px; color:#5f6368; display:flex; align-items:center; gap:5px; padding-bottom:6px;">
+        <input type="checkbox" id="planner-fixed-${b.id}" ${b.is_fixed ? 'checked' : ''}> Fixed block
+      </label>
+      <button class="small primary" onclick="plannerSaveBlock(${b.id})">Save</button>
+      ${!b.is_fixed ? `
+        <button class="small ghost soft" onclick="plannerMoveBlock(${b.id},'up')">Move up</button>
+        <button class="small ghost soft" onclick="plannerMoveBlock(${b.id},'down')">Move down</button>
+        ${b.subject_id ? `<button class="small ghost soft" onclick="plannerPullSubjectDue(${b.id})">Pull due cards</button>` : ''}
+      ` : ''}
+      <button class="small ghost soft" style="color:#b91c1c;" onclick="plannerDeleteBlock(${b.id})">Delete</button>
+    </div>
+  ` : '';
+
+  const carryPrompt = plannerCarryPrompts.has(b.id) ? `
+    <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:10px;">
+      <div style="font-size:11.5px; color:#9a3412; flex-basis:100%;">Not finished yet? Mark today done and carry the remaining time to tomorrow's plan.</div>
+      <label style="font-size:11px; color:#5f6368;">Minutes remaining
+        <input type="number" min="10" max="180" id="planner-carry-mins-${b.id}" value="${b.duration_minutes}" style="display:block; width:100px; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <button class="small primary" onclick="plannerCarryOver(${b.id})">Carry over to tomorrow</button>
+      <button class="small ghost soft" onclick="plannerToggleCarryPrompt(${b.id})">Cancel</button>
+    </div>
+  ` : '';
+
+  return `
+    <article class="subject-panel" data-block-id="${b.id}" style="margin-bottom:12px; padding:14px 16px; ${b.completed ? 'opacity:.75;' : ''} border-left:4px solid ${b.is_fixed ? '#3730a3' : '#0f766e'};">
+      <div style="display:flex; align-items:flex-start; gap:10px;">
+        ${draggable ? '<span class="planner-drag-handle" style="cursor:grab; color:#9aa0a6; font-size:16px; padding-top:2px;" title="Drag to reorder">\u283f</span>' : ''}
+        <button onclick="plannerToggleBlock(${b.id}, ${b.completed ? 'false' : 'true'})" style="width:22px; height:22px; border-radius:6px; padding:0; ${b.completed ? 'background:#2E7D32; border-color:#2E7D32; color:#fff;' : ''}" title="Toggle complete">${b.completed ? '\u2713' : ''}</button>
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <strong style="font-size:13px; ${b.completed ? 'text-decoration:line-through; color:#5f6368;' : ''}">${escapeHtml(b.task_name || 'Study block')}</strong>
+            ${kindBadge}${linkedBadge}${carriedBadge}${continuedFromBadge}${recurringBadge}
+          </div>
+          <div style="font-size:11px; color:#5f6368; margin-top:2px;">
+            ${subject ? `${subject.icon || '\ud83d\udcda'} ${escapeHtml(subject.name)}` : 'No subject'} \u00b7 ${b.duration_minutes} min${timeBadge}
+          </div>
+          ${linksHtml}
+          <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="small ghost soft" onclick="plannerToggleEditBlock(${b.id})">${isEditing ? 'Close' : 'Edit'}</button>
+            ${!b.completed ? `<button class="small ghost soft" onclick="plannerToggleCarryPrompt(${b.id})">\u21bb Not finished</button>` : ''}
+          </div>
+          ${editBlock}
+          ${carryPrompt}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function plannerAddBlockFormHtml(subjectsById){
+  const subjectOptions = Object.values(subjectsById).map(s =>
+    `<option value="${s.id}">${s.icon || '\ud83d\udcda'} ${escapeHtml(s.name)}</option>`
+  ).join('');
+  if(!plannerAddingBlock){
+    return `<button class="small ghost soft" onclick="plannerToggleAddBlock()" style="margin-bottom:12px;">+ Add block</button>`;
+  }
+  return `
+    <div style="margin-bottom:14px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; background:#fafafa; border:1px solid var(--line); border-radius:8px; padding:10px;">
+      <label style="font-size:11px; color:#5f6368; flex:1; min-width:160px;">Task name
+        <input type="text" id="planner-new-taskname" placeholder="e.g. Piano practice" style="display:block; width:100%; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Minutes
+        <input type="number" min="10" max="180" id="planner-new-minutes" value="50" style="display:block; width:80px; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Start time
+        <input type="time" id="planner-new-start" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">End time
+        <input type="time" id="planner-new-end" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Subject
+        <select id="planner-new-subject" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+          <option value="">No subject</option>
+          ${subjectOptions}
+        </select>
+      </label>
+      <label style="font-size:11px; color:#5f6368;">Repeat
+        <select id="planner-new-repeat" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+          <option value="">Just today</option>
+          <option value="all">Every day</option>
+          <option value="0">Every Monday</option>
+          <option value="1">Every Tuesday</option>
+          <option value="2">Every Wednesday</option>
+          <option value="3">Every Thursday</option>
+          <option value="4">Every Friday</option>
+          <option value="5">Every Saturday</option>
+          <option value="6">Every Sunday</option>
+        </select>
+      </label>
+      <label style="font-size:11px; color:#5f6368; display:flex; align-items:center; gap:5px; padding-bottom:6px;">
+        <input type="checkbox" id="planner-new-fixed"> Fixed block
+      </label>
+      <button class="small primary" onclick="plannerSaveNewBlock()">Add</button>
+      <button class="small ghost soft" onclick="plannerToggleAddBlock()">Cancel</button>
+    </div>
+  `;
+}
+
+function renderPlannerDayView(day){
+  const subjectsById = {};
+  day.subjects.forEach(s => subjectsById[s.id] = s);
+  const fixed = day.day_blocks.filter(b => b.is_fixed);
+  const rotating = day.day_blocks.filter(b => !b.is_fixed);
+  const WEEKDAY_LABELS = ['Every Monday','Every Tuesday','Every Wednesday','Every Thursday','Every Friday','Every Saturday','Every Sunday'];
+
+  let html = '';
+  if(day.fixed_rules && day.fixed_rules.length){
+    html += `<details style="margin-bottom:12px;">
+      <summary style="cursor:pointer; font-size:11.5px; color:#6d28d9; font-weight:600;">\ud83d\udd01 Recurring fixed blocks (${day.fixed_rules.length})</summary>
+      <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
+        ${day.fixed_rules.map(r => {
+          const subj = r.subject_id ? subjectsById[r.subject_id] : null;
+          const when = r.weekday === null ? 'Every day' : WEEKDAY_LABELS[r.weekday];
+          return `<div style="display:flex; align-items:center; gap:8px; font-size:11.5px; background:#faf5ff; border:1px solid #e9d5ff; border-radius:8px; padding:6px 10px;">
+            <span style="flex:1;">${subj ? (subj.icon || '\ud83d\udcda') + ' ' : ''}${escapeHtml(r.task_name)} \u00b7 ${when}${r.start_time ? ' \u00b7 ' + r.start_time : ''} \u00b7 ${r.duration_minutes}min</span>
+            <button class="small ghost soft" style="color:#b91c1c;" onclick="plannerDeleteFixedRule(${r.id})">Remove</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </details>`;
+  }
+  html += plannerAddBlockFormHtml(subjectsById);
+  if(day.day_blocks.length === 0){
+    html += '<div class="queue-empty">No blocks generated for this day yet.</div>';
+  }
+  html += fixed.map(b => plannerBlockHtml(b, subjectsById, false)).join('');
+  if(rotating.length){
+    html += `<p style="font-size:10.5px; color:#9aa0a6; margin:14px 0 6px;">\u283f Drag the handle to reorder rotating blocks \u2014 fixed blocks always stay first.</p>`;
+    html += `<div id="plannerRotatingList">${rotating.map(b => plannerBlockHtml(b, subjectsById, true)).join('')}</div>`;
+  }
+
+  const linkedSet = new Set(day.linked_keys);
+  html += `<div class="section-label" style="margin-top:22px;">Revision Desk due cards for ${formatDateDay(day.on)}</div>`;
+  if(!day.due_cards.length){
+    html += '<div class="queue-empty">No due cards found for this date.</div>';
+  } else {
+    html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+    day.due_cards.forEach(card => {
+      const key = `${card.revision_subject_id}::${card.revision_chapter_id}`;
+      const already = linkedSet.has(key);
+      const cardSubject = card.subject_id ? subjectsById[card.subject_id] : null;
+      const cardIcon = cardSubject ? (cardSubject.icon || '\ud83d\udcda') : '\ud83d\udcda';
+      html += `
+        <div class="subject-panel" style="padding:10px 14px; ${already ? 'background:#f0fdf4; border-color:#bbf7d0;' : ''}">
+          <div style="font-weight:600; font-size:12px;">${escapeHtml(card.chapter_name)}</div>
+          <div style="font-size:11px; color:#5f6368;">${cardIcon} ${escapeHtml(card.subject_name)} \u00b7 due ${formatDateDay(card.due_date)}</div>
+          ${already
+            ? `<div style="margin-top:4px; font-size:11px; color:#15803d;">Already in this day's plan</div>`
+            : `<button class="small primary" style="margin-top:6px;" onclick="plannerAddDue('${card.revision_subject_id}','${card.revision_chapter_id}')">Add to this day's plan</button>`}
+        </div>`;
+    });
+    html += '</div>';
+  }
+  return html;
+}
+
+function renderPlannerWeekGrid(week){
+  const subjectsById = {};
+  week.subjects.forEach(s => subjectsById[s.id] = s);
+  let html = '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px,1fr)); gap:10px; margin-bottom:20px;">';
+  week.week_dates.forEach(dateIso => {
+    const blocks = week.blocks_by_day[dateIso] || [];
+    const done = week.day_completed_map[dateIso];
+    const isSelected = dateIso === plannerOn;
+    const d = new Date(dateIso + 'T00:00:00');
+    const dayLabel = d.toLocaleDateString('en-GB', { weekday: 'short' });
+    const dateLabel = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    html += `
+      <div onclick="plannerGoto('${dateIso}')" style="cursor:pointer; border:1px solid ${isSelected ? '#0f766e' : 'var(--line)'}; background:${isSelected ? '#f0fdfa' : '#fff'}; border-radius:10px; padding:10px 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:10.5px; color:#5f6368;">${dayLabel}</div>
+            <div style="font-weight:700; font-size:12.5px;">${dateLabel}</div>
+          </div>
+          <span style="font-size:9.5px; padding:2px 8px; border-radius:10px; ${done ? 'background:#dcfce7; color:#15803d;' : 'background:#fef3c7; color:#b45309;'}">${done ? 'Done' : 'Open'}</span>
+        </div>
+        <div style="margin-top:6px; display:flex; flex-direction:column; gap:3px;">
+          ${blocks.slice(0, 4).map(b => {
+            const subject = b.subject_id ? subjectsById[b.subject_id] : null;
+            const icon = subject ? `${subject.icon || '\ud83d\udcda'} ` : '';
+            return `<div style="font-size:10.5px; padding:3px 6px; border-radius:6px; background:${b.is_fixed ? '#eef2ff' : '#f8fafc'}; border:1px solid ${b.is_fixed ? '#c7d2fe' : '#e2e8f0'};">${icon}${escapeHtml(subject ? subject.name : b.task_name)} \u00b7 ${b.duration_minutes}m</div>`;
+          }).join('')}
+          ${blocks.length > 4 ? `<div style="font-size:9.5px; color:#5f6368;">+${blocks.length - 4} more</div>` : ''}
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+
+  const totalsValues = Object.values(week.weekly_totals);
+  const maxTotal = Math.max(1, ...(totalsValues.length ? totalsValues : [0]));
+  html += '<div class="subject-panel"><div class="section-label">Weekly subject time totals</div>';
+  week.subjects.forEach(s => {
+    const mins = week.weekly_totals[String(s.id)] || 0;
+    const pct = Math.round((mins * 100) / maxTotal);
+    html += `
+      <div style="margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:3px;">
+          <span>${s.icon || '\ud83d\udcda'} ${escapeHtml(s.name)}</span><span style="color:#5f6368;">${mins} min</span>
+        </div>
+        <div style="height:6px; border-radius:4px; background:#eef0f3; overflow:hidden;">
+          <div style="height:100%; width:${pct}%; background:${s.color};"></div>
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderPlannerHtml(){
+  if(!plannerOn) plannerOn = todayStr();
+  const day = plannerDayData;
+  const streak = day ? day.streak_days : 0;
+  const dayCompleted = day ? day.day_completed : false;
+  const dateObj = new Date(plannerOn + 'T00:00:00');
+  const dateLabel = dateObj.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+
+  let html = `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+      <button class="small ${plannerViewMode==='timeline' ? 'primary' : 'ghost soft'}" onclick="setPlannerView('timeline')">Daily Timeline</button>
+      <button class="small ${plannerViewMode==='week' ? 'primary' : 'ghost soft'}" onclick="setPlannerView('week')">Weekly Grid</button>
+      <span style="margin-left:auto; font-size:12px; padding:6px 12px; border-radius:16px; background:#eef2ff; color:#3730a3; font-weight:600;">Streak: ${streak} day${streak !== 1 ? 's' : ''}</span>
+      <span style="font-size:12px; padding:6px 12px; border-radius:16px; ${dayCompleted ? 'background:#dcfce7; color:#15803d;' : 'background:#fef3c7; color:#b45309;'}">${dayCompleted ? 'All required blocks completed' : 'Blocks remaining today'}</span>
+    </div>
+  `;
+
+  if(plannerViewMode === 'timeline'){
+    html += `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+        <button class="small ghost soft" onclick="plannerGoto('${day ? day.prev : plannerOn}')">\u2190 Prev day</button>
+        <strong style="font-size:13px;">${dateLabel}</strong>
+        <button class="small ghost soft" onclick="plannerGoto('${todayStr()}')">Today</button>
+        <button class="small ghost soft" onclick="plannerGoto('${day ? day.next : plannerOn}')">Next day \u2192</button>
+      </div>
+    `;
+  }
+
+  if(plannerLoading && !plannerDayData && !plannerWeekData){
+    html += '<div class="queue-empty">Loading Study Planner\u2026</div>';
+    return html;
+  }
+
+  html += plannerViewMode === 'week'
+    ? (plannerWeekData ? renderPlannerWeekGrid(plannerWeekData) : '<div class="queue-empty">Loading week\u2026</div>')
+    : (plannerDayData ? renderPlannerDayView(plannerDayData) : '<div class="queue-empty">Loading day\u2026</div>');
+
+  return html;
+}
+
 function renderTabs(){
   const tabsEl = document.getElementById('tabs');
   const todayActive = activeTab==='today';
@@ -1220,7 +1805,10 @@ function renderTabs(){
     : '';
   const weekActive = activeTab==='week';
   const weekStyle = weekActive ? `background:#0f766e; color:#fff; border-color:#0f766e;` : `border-color:rgba(15,118,110,0.4);`;
-  let html = `<div class="tab" style="${todayStyle}" onclick="setTab('today')"><span class="tab-dot" style="background:${todayActive?'#fff':'var(--ink)'};"></span>Today</div>`;
+  const plannerActive = activeTab==='planner';
+  const plannerStyle = plannerActive ? `background:#7c3aed; color:#fff; border-color:#7c3aed;` : `border-color:rgba(124,58,237,0.4);`;
+  let html = `<div class="tab" style="${plannerStyle}" onclick="setTab('planner')"><span class="tab-dot" style="background:${plannerActive?'#fff':'#7c3aed'};"></span>\ud83e\udded Study Planner</div>`;
+  html += `<div class="tab" style="${todayStyle}" onclick="setTab('today')"><span class="tab-dot" style="background:${todayActive?'#fff':'var(--ink)'};"></span>Today</div>`;
   html += `<div class="tab" style="${weekStyle}" onclick="setTab('week')"><span class="tab-dot" style="background:${weekActive?'#fff':'#0f766e'};"></span>7-Day Schedule</div>`;
   data.subjects.forEach(s=>{
     if(s.disabled) return;
@@ -1286,6 +1874,10 @@ function renderChapterRow(s, c, showSubject){
     const attachmentCell = attachments.length
       ? `<div style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line);">${renderAttachmentList(attachments)}</div>`
       : '';
+    const plannerDate = c.dueDate ? (daysBetween(todayStr(), c.dueDate) <= 0 ? todayStr() : c.dueDate) : '';
+    const plannerBtn = plannerDate
+      ? `<button class="small ghost soft" onclick="sendToPlanner('${s.id}','${c.id}','${plannerDate}')" title="Add this chapter to Study Planner for ${plannerDate}">→ Planner</button>`
+      : '';
     return `
       <tr class="${isIA ? 'ia-row' : ''}">
         ${nameCell}
@@ -1299,7 +1891,7 @@ function renderChapterRow(s, c, showSubject){
         <td class="mono-cell">${maxMarksValue ? escapeHtml(maxMarksValue) : `<span style="color:${DIM};">–</span>`}</td>
         <td class="mono-cell">${ibGrade != null ? String(ibGrade) : `<span style="color:${DIM};">–</span>`}</td>
         <td class="mono-cell">${timeCell}</td>
-        <td style="white-space:nowrap;"><button class="small ghost soft" onclick="toggleEditRow('${c.id}')">Edit</button> <button class="small ghost soft" onclick="openChapterHistory('${s.id}','${c.id}')">History</button></td>
+        <td style="white-space:nowrap;"><button class="small ghost soft" onclick="toggleEditRow('${c.id}')">Edit</button> <button class="small ghost soft" onclick="openChapterHistory('${s.id}','${c.id}')">History</button> ${plannerBtn}</td>
       </tr>
     `;
   }
@@ -1539,6 +2131,11 @@ function renderContent(){
   }
   if(activeTab === 'week'){
     el.innerHTML = renderWeekHtml();
+    return;
+  }
+  if(activeTab === 'planner'){
+    el.innerHTML = renderPlannerHtml();
+    initPlannerSortable();
     return;
   }
   if(activeTab !== 'today'){

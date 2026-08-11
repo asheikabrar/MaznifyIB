@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     Time,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -168,6 +169,71 @@ class RevisionDeskState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class StudyPlannerBlock(Base):
+    __tablename__ = "study_planner_blocks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    on_date: Mapped[date] = mapped_column(Date, index=True)
+    slot_index: Mapped[int] = mapped_column(Integer, default=0)
+    block_kind: Mapped[str] = mapped_column(String(40), default="rotating")
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True)
+    task_name: Mapped[str] = mapped_column(String(300), default="")
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=50)
+    start_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "HH:MM", 24h
+    end_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "HH:MM", 24h
+    is_fixed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revision_pushed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    carried_forward: Mapped[bool] = mapped_column(Boolean, default=False)  # this block's leftover work was carried to the next day
+    carried_from_id: Mapped[Optional[int]] = mapped_column(ForeignKey("study_planner_blocks.id"), nullable=True)
+    source_rule_id: Mapped[Optional[int]] = mapped_column(ForeignKey("planner_fixed_rules.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    subject: Mapped[Optional[Subject]] = relationship()
+    revision_links: Mapped[list["StudyPlannerRevisionLink"]] = relationship(
+        back_populates="block", cascade="all, delete-orphan"
+    )
+
+
+class PlannerFixedRule(Base):
+    """A recurring commitment (e.g. "every Tuesday") that auto-materializes into a fixed block each matching day."""
+    __tablename__ = "planner_fixed_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    weekday: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 0=Mon..6=Sun; NULL = every day
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("subjects.id"), nullable=True)
+    task_name: Mapped[str] = mapped_column(String(300), default="")
+    start_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "HH:MM"
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=50)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    subject: Mapped[Optional[Subject]] = relationship()
+
+
+class StudyPlannerRevisionLink(Base):
+    __tablename__ = "study_planner_revision_links"
+    __table_args__ = (
+        UniqueConstraint("block_id", "revision_subject_id", "revision_chapter_id", name="uq_planner_block_revision_link"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    block_id: Mapped[int] = mapped_column(ForeignKey("study_planner_blocks.id"), index=True)
+    revision_subject_id: Mapped[str] = mapped_column(String(120), default="")
+    revision_chapter_id: Mapped[str] = mapped_column(String(120), default="")
+    revision_subject_name: Mapped[str] = mapped_column(String(200), default="")
+    revision_chapter_name: Mapped[str] = mapped_column(String(300), default="")
+    due_date: Mapped[str] = mapped_column(String(20), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    block: Mapped[StudyPlannerBlock] = relationship(back_populates="revision_links")
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
@@ -203,4 +269,5 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(300))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     anthropic_api_key: Mapped[str] = mapped_column(String(300), default="")
+    calendar_token: Mapped[str] = mapped_column(String(64), default="")  # secret used by the .ics subscription feed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
