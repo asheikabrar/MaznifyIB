@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, update, delete, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import ai, auth, notes, planner, scheduler, study_planner
@@ -1942,6 +1942,26 @@ def _serialize_fixed_rule(r: PlannerFixedRule) -> dict:
     }
 
 
+def _planner_time_minutes(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        hh, mm = str(value).split(":")
+        return int(hh) * 60 + int(mm)
+    except (TypeError, ValueError):
+        return None
+
+
+def _planner_block_sort_key(start_time: Optional[str], slot_index: int, block_id: int) -> tuple:
+    """Blocks with an explicit start time (fixed or not) sort chronologically by
+    that time first, so setting e.g. 05:00/06:00 rearranges the whole day -- blocks
+    without a time keep their manually-arranged slot order, placed after timed ones."""
+    minutes = _planner_time_minutes(start_time)
+    if minutes is not None:
+        return (0, minutes, slot_index, block_id)
+    return (1, 0, slot_index, block_id)
+
+
 def _planner_day_payload(db: Session, uid: Optional[int], on_date: date) -> dict:
     week_start = study_planner.week_start_monday(on_date)
     study_planner.ensure_week_blocks_safe(db, uid, on_date)
@@ -1959,7 +1979,7 @@ def _build_planner_day_payload(
 ) -> dict:
     day_blocks = sorted(
         (b for b in week_blocks if b.on_date == on_date and b.block_kind != "placeholder"),
-        key=lambda b: (b.slot_index, b.id),
+        key=lambda b: _planner_block_sort_key(b.start_time, b.slot_index, b.id),
     )
 
     subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
@@ -2029,7 +2049,7 @@ def _build_planner_week_payload(
             continue
         blocks_by_day.setdefault(b.on_date.isoformat(), []).append(_serialize_planner_block(b))
     for day_iso in blocks_by_day:
-        blocks_by_day[day_iso].sort(key=lambda b: (b["slot_index"], b["id"]))
+        blocks_by_day[day_iso].sort(key=lambda b: _planner_block_sort_key(b["start_time"], b["slot_index"], b["id"]))
 
     subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
     weekly_totals = study_planner.weekly_subject_minutes(week_blocks)
@@ -2410,26 +2430,31 @@ async def study_planner_api_block_move(block_id: int, request: Request, db: Sess
         payload = {}
     direction = payload.get("direction") or "up"
 
-    if not block.is_fixed:
-        day_blocks = list(
-            db.scalars(
-                select(StudyPlannerBlock)
-                .where(StudyPlannerBlock.owner_id == uid)
-                .where(StudyPlannerBlock.on_date == block.on_date)
-                .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
-            )
+    # any block -- fixed included -- can be moved; blocks are otherwise sorted
+    # chronologically by start_time, so this only affects untimed blocks' order
+    day_blocks = list(
+        db.scalars(
+            select(StudyPlannerBlock)
+            .where(StudyPlannerBlock.owner_id == uid)
+            .where(StudyPlannerBlock.on_date == block.on_date)
+            .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
         )
-        movable = [b for b in day_blocks if not b.is_fixed]
-        try:
-            idx = [b.id for b in movable].index(block.id)
-        except ValueError:
-            idx = -1
+    )
+    try:
+        idx = [b.id for b in day_blocks].index(block.id)
+    except ValueError:
+        idx = -1
 
-        if idx >= 0:
-            swap_idx = idx - 1 if direction == "up" else idx + 1
-            if 0 <= swap_idx < len(movable):
-                other = movable[swap_idx]
-                block.slot_index, other.slot_index = other.slot_index, block.slot_index
+    if idx >= 0:
+        swap_idx = idx - 1 if direction == "up" else idx + 1
+        if 0 <= swap_idx < len(day_blocks):
+            other = day_blocks[swap_idx]
+            a_slot, b_slot = block.slot_index, other.slot_index
+            # two-phase update: the unique(owner_id, on_date, slot_index) constraint is
+            # checked per-row, so swapping directly can transiently collide mid-flush
+            block.slot_index, other.slot_index = -1, -2
+            db.flush()
+            block.slot_index, other.slot_index = b_slot, a_slot
 
     db.commit()
     return _planner_day_payload_light(db, uid, block.on_date)
@@ -2437,6 +2462,9 @@ async def study_planner_api_block_move(block_id: int, request: Request, db: Sess
 
 @app.post("/study-planner/api/blocks/{block_id}/pull-subject-due")
 async def study_planner_api_pull_subject_due(block_id: int, request: Request, db: Session = Depends(get_db)):
+    """Pull any due revision cards for this block's subject onto the day's plan.
+    Each due card becomes its own standalone due-review block (not merged into this
+    or any other block) so Focused blocks stay reserved for studying new content."""
     uid = _uid(request)
     block = db.get(StudyPlannerBlock, block_id)
     if not block or block.owner_id != uid:
@@ -2452,21 +2480,72 @@ async def study_planner_api_pull_subject_due(block_id: int, request: Request, db
         subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
         revision_state = study_planner.load_revision_desk_state(db, uid)
         due_cards = study_planner.get_due_cards_for_day(revision_state, on_date)
-
-        added = False
-        for card in due_cards:
-            sid = study_planner.map_due_card_subject_to_id(card, subjects)
-            if sid != block.subject_id:
-                continue
-            added = study_planner.add_due_link_to_block(db, block, card) or added
-
-        if added and not block.task_name.strip():
-            subj = db.get(Subject, block.subject_id)
-            if subj:
-                block.task_name = f"{subj.name}: due revision cards"
+        matching = [c for c in due_cards if study_planner.map_due_card_subject_to_id(c, subjects) == block.subject_id]
+        if matching:
+            # fetch the day's blocks once and reuse across the loop instead of
+            # re-querying per due card
+            day_blocks = list(
+                db.scalars(
+                    select(StudyPlannerBlock)
+                    .where(StudyPlannerBlock.owner_id == uid)
+                    .where(StudyPlannerBlock.on_date == on_date)
+                    .options(selectinload(StudyPlannerBlock.revision_links))
+                )
+            )
+            for card in matching:
+                _add_due_card_as_block(db, uid, on_date, block.subject_id, card, day_blocks)
 
     db.commit()
     return _planner_day_payload_light(db, uid, on_date)
+
+
+def _add_due_card_as_block(
+    db: Session,
+    uid: int,
+    on_date: date,
+    subject_id: Optional[int],
+    due_card: "study_planner.RevisionDueCard",
+    day_blocks: Optional[list[StudyPlannerBlock]] = None,
+) -> Optional[StudyPlannerBlock]:
+    """Create a standalone due-review block for one due revision card, unless that
+    exact card is already linked to a block on this day. Pass an already-fetched
+    day_blocks list (with revision_links loaded) to avoid re-querying in a loop --
+    it's extended in place so repeat calls stay consistent."""
+    if day_blocks is None:
+        day_blocks = list(
+            db.scalars(
+                select(StudyPlannerBlock)
+                .where(StudyPlannerBlock.owner_id == uid)
+                .where(StudyPlannerBlock.on_date == on_date)
+                .options(selectinload(StudyPlannerBlock.revision_links))
+            )
+        )
+    already_linked = any(
+        link.revision_subject_id == due_card.subject_id and link.revision_chapter_id == due_card.chapter_id
+        for b in day_blocks
+        for link in b.revision_links
+    )
+    if already_linked:
+        return None
+
+    max_slot = max((b.slot_index for b in day_blocks), default=-1)
+    subj = db.get(Subject, subject_id) if subject_id else None
+    block = StudyPlannerBlock(
+        owner_id=uid,
+        on_date=on_date,
+        slot_index=max_slot + 1,
+        block_kind="due_review",
+        subject_id=subject_id,
+        task_name=f"{subj.name if subj else due_card.subject_name}: {due_card.chapter_name}",
+        duration_minutes=30,
+        is_fixed=False,
+        is_optional=False,
+    )
+    db.add(block)
+    db.flush()
+    study_planner.add_due_link_to_block(db, block, due_card)
+    day_blocks.append(block)
+    return block
 
 
 @app.post("/study-planner/api/add-due")
@@ -2496,43 +2575,22 @@ async def study_planner_api_add_due(request: Request, db: Session = Depends(get_
         return _planner_day_payload_light(db, uid, on_date)
 
     mapped_subject_id = study_planner.map_due_card_subject_to_id(due_card, subjects)
-    if mapped_subject_id is None:
-        return _planner_day_payload_light(db, uid, on_date)
 
     study_planner.ensure_week_blocks_safe(db, uid, on_date)
     db.flush()
 
-    day_blocks = list(
-        db.scalars(
-            select(StudyPlannerBlock)
-            .where(StudyPlannerBlock.owner_id == uid)
-            .where(StudyPlannerBlock.on_date == on_date)
-            .order_by(StudyPlannerBlock.slot_index, StudyPlannerBlock.id)
-        )
+    # a manually-added due block means this day is no longer "empty"
+    db.execute(
+        delete(StudyPlannerBlock)
+        .where(StudyPlannerBlock.owner_id == uid)
+        .where(StudyPlannerBlock.on_date == on_date)
+        .where(StudyPlannerBlock.block_kind == "placeholder")
     )
-    target = next(
-        (b for b in day_blocks if (not b.is_fixed) and b.subject_id == mapped_subject_id),
-        None,
-    )
+    db.flush()
 
-    if target is None:
-        max_slot = max((b.slot_index for b in day_blocks), default=-1)
-        subj = db.get(Subject, mapped_subject_id)
-        target = StudyPlannerBlock(
-            owner_id=uid,
-            on_date=on_date,
-            slot_index=max_slot + 1,
-            block_kind="rotating",
-            subject_id=mapped_subject_id,
-            task_name=f"{subj.name if subj else 'Subject'}: due revision cards",
-            duration_minutes=50,
-            is_fixed=False,
-            is_optional=False,
-        )
-        db.add(target)
-        db.flush()
-
-    study_planner.add_due_link_to_block(db, target, due_card)
+    # always a standalone due-review block -- kept separate from Focused blocks,
+    # which are reserved for studying new content
+    _add_due_card_as_block(db, uid, on_date, mapped_subject_id, due_card)
     db.commit()
     return _planner_day_payload_light(db, uid, on_date)
 
@@ -2557,22 +2615,32 @@ async def study_planner_api_blocks_reorder(request: Request, db: Session = Depen
             .where(StudyPlannerBlock.on_date == on_date)
         )
     )
-    fixed_count = sum(1 for b in day_blocks if b.is_fixed)
-    movable_by_id = {b.id: b for b in day_blocks if not b.is_fixed}
+    # any block -- fixed included -- can be dragged into a new position
+    blocks_by_id = {b.id: b for b in day_blocks}
 
-    next_slot = fixed_count
+    next_slot = 0
     seen: set[int] = set()
+    targets: list[tuple[StudyPlannerBlock, int]] = []
     for raw_id in order:
         try:
             bid = int(raw_id)
         except (TypeError, ValueError):
             continue
-        block = movable_by_id.get(bid)
+        block = blocks_by_id.get(bid)
         if not block or bid in seen:
             continue
-        block.slot_index = next_slot
+        targets.append((block, next_slot))
         next_slot += 1
         seen.add(bid)
+
+    # two-phase update: the unique(owner_id, on_date, slot_index) constraint is checked
+    # per-row, so reassigning slots directly can transiently collide mid-flush for
+    # permutations that aren't a simple append (e.g. swaps)
+    for i, (block, _) in enumerate(targets):
+        block.slot_index = -(i + 1)
+    db.flush()
+    for block, slot in targets:
+        block.slot_index = slot
 
     db.commit()
     return _planner_day_payload_light(db, uid, on_date)
@@ -2861,7 +2929,12 @@ def study_planner_block_move(
         swap_idx = idx - 1 if direction == "up" else idx + 1
         if 0 <= swap_idx < len(movable):
             other = movable[swap_idx]
-            block.slot_index, other.slot_index = other.slot_index, block.slot_index
+            a_slot, b_slot = block.slot_index, other.slot_index
+            # two-phase update: the unique(owner_id, on_date, slot_index) constraint is
+            # checked per-row, so swapping directly can transiently collide mid-flush
+            block.slot_index, other.slot_index = -1, -2
+            db.flush()
+            block.slot_index, other.slot_index = b_slot, a_slot
 
     db.commit()
     return RedirectResponse(
@@ -2899,6 +2972,7 @@ async def study_planner_blocks_reorder(request: Request, db: Session = Depends(g
 
     next_slot = fixed_count
     seen: set[int] = set()
+    targets: list[tuple[StudyPlannerBlock, int]] = []
     for raw_id in order:
         try:
             bid = int(raw_id)
@@ -2907,9 +2981,16 @@ async def study_planner_blocks_reorder(request: Request, db: Session = Depends(g
         block = movable_by_id.get(bid)
         if not block or bid in seen:
             continue
-        block.slot_index = next_slot
+        targets.append((block, next_slot))
         next_slot += 1
         seen.add(bid)
+
+    # two-phase update: avoids a transient unique(owner_id, on_date, slot_index) collision
+    for i, (block, _) in enumerate(targets):
+        block.slot_index = -(i + 1)
+    db.flush()
+    for block, slot in targets:
+        block.slot_index = slot
 
     db.commit()
     return {"ok": True}

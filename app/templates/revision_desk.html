@@ -321,6 +321,7 @@ let plannerEditingBlocks = new Set();
 let plannerCarryPrompts = new Set();
 let plannerAddingBlock = false;
 let plannerSortableInstance = null;
+let plannerSubjectsById = {};
 
 const TAB_COLORS = [
   '#3F51B5', // indigo
@@ -1495,15 +1496,80 @@ function plannerDeleteFixedRule(ruleId){
   });
 }
 
+function normalizeSubjectNameJs(name){
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function findRevisionSubjectByDbName(dbName){
+  const target = normalizeSubjectNameJs(dbName);
+  if(!Array.isArray(data.subjects) || !target) return null;
+  let match = data.subjects.find(s => normalizeSubjectNameJs(s.name) === target);
+  if(!match){
+    match = data.subjects.find(s => {
+      const a = normalizeSubjectNameJs(s.name);
+      return a && (target.includes(a) || a.includes(target));
+    });
+  }
+  return match || null;
+}
+
+function plannerChapterOptionsHtml(dbSubjectName, selectedChapterId){
+  const match = findRevisionSubjectByDbName(dbSubjectName);
+  const chapters = (match && Array.isArray(match.chapters)) ? match.chapters : [];
+  if(!chapters.length) return '<option value="">No chapters saved for this subject yet</option>';
+  return '<option value="">\u2014 none \u2014</option>' + chapters.map(c =>
+    `<option value="${escapeHtml(String(c.id))}" ${String(c.id) === String(selectedChapterId || '') ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+  ).join('');
+}
+
+function plannerBlockSubjectChanged(blockId){
+  const subjEl = document.getElementById(`planner-subject-${blockId}`);
+  const wrap = document.getElementById(`planner-chapter-wrap-${blockId}`);
+  const sel = document.getElementById(`planner-chapter-${blockId}`);
+  if(!subjEl || !wrap || !sel) return;
+  const subj = plannerSubjectsById[subjEl.value];
+  if(!subj){ wrap.style.display = 'none'; sel.innerHTML = ''; return; }
+  wrap.style.display = '';
+  sel.innerHTML = plannerChapterOptionsHtml(subj.name);
+}
+
+function plannerBlockChapterPicked(blockId){
+  const sel = document.getElementById(`planner-chapter-${blockId}`);
+  const taskEl = document.getElementById(`planner-taskname-${blockId}`);
+  const opt = sel && sel.options[sel.selectedIndex];
+  if(opt && opt.value && taskEl) taskEl.value = opt.textContent;
+}
+
+function plannerNewSubjectChanged(){
+  const subjEl = document.getElementById('planner-new-subject');
+  const wrap = document.getElementById('planner-new-chapter-wrap');
+  const sel = document.getElementById('planner-new-chapter');
+  if(!subjEl || !wrap || !sel) return;
+  const subj = plannerSubjectsById[subjEl.value];
+  if(!subj){ wrap.style.display = 'none'; sel.innerHTML = ''; return; }
+  wrap.style.display = '';
+  sel.innerHTML = plannerChapterOptionsHtml(subj.name);
+}
+
+function plannerNewChapterPicked(){
+  const sel = document.getElementById('planner-new-chapter');
+  const taskEl = document.getElementById('planner-new-taskname');
+  const opt = sel && sel.options[sel.selectedIndex];
+  if(opt && opt.value && taskEl) taskEl.value = opt.textContent;
+}
+
 function plannerBlockHtml(b, subjectsById, draggable){
   const subject = b.subject_id ? subjectsById[b.subject_id] : null;
   const isEditing = plannerEditingBlocks.has(b.id);
+  const isDueReview = b.block_kind === 'due_review';
   const kindBadge = b.is_fixed
     ? '<span class="priority-tag" style="background:#3730a3;">Fixed</span>'
-    : b.is_optional
-      ? '<span class="priority-tag" style="background:#64748b;">Optional</span>'
-      : '<span class="priority-tag" style="background:#0f766e;">Rotating</span>';
-  const linkedBadge = b.revision_links.length
+    : isDueReview
+      ? '<span class="priority-tag" style="background:#0369a1;">\u23f3 Due review</span>'
+      : b.is_optional
+        ? '<span class="priority-tag" style="background:#64748b;">Optional</span>'
+        : '<span class="priority-tag" style="background:#0f766e;">Focused</span>';
+  const linkedBadge = (b.revision_links.length && !isDueReview)
     ? '<span class="priority-tag" style="background:#0369a1;">Linked</span>'
     : '';
   const carriedBadge = b.carried_forward
@@ -1525,8 +1591,10 @@ function plannerBlockHtml(b, subjectsById, draggable){
     `<option value="${s.id}" ${b.subject_id === s.id ? 'selected' : ''}>${s.icon || '\ud83d\udcda'} ${escapeHtml(s.name)}</option>`
   ).join('');
   const timeBadge = (b.start_time || b.end_time)
-    ? ` \u00b7 \ud83d\udd50 ${formatTimeRange(b.start_time, b.end_time)}`
+    ? `<span style="font-size:16px; font-weight:800; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:8px; padding:5px 12px; white-space:nowrap;">\ud83d\udd50 ${formatTimeRange(b.start_time, b.end_time)}</span>`
     : '';
+  const chapterWrapStyle = subject ? '' : 'display:none;';
+  const chapterOptionsInitial = subject ? plannerChapterOptionsHtml(subject.name) : '';
 
   const editBlock = isEditing ? `
     <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; background:#fafafa; border:1px solid var(--line); border-radius:8px; padding:10px;">
@@ -1543,20 +1611,23 @@ function plannerBlockHtml(b, subjectsById, draggable){
         <input type="time" id="planner-end-${b.id}" value="${b.end_time || ''}" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
       </label>
       <label style="font-size:11px; color:#5f6368;">Subject
-        <select id="planner-subject-${b.id}" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+        <select id="planner-subject-${b.id}" onchange="plannerBlockSubjectChanged(${b.id})" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
           <option value="">No subject</option>
           ${subjectOptions}
+        </select>
+      </label>
+      <label id="planner-chapter-wrap-${b.id}" style="font-size:11px; color:#5f6368; ${chapterWrapStyle}">Chapter (studying new content)
+        <select id="planner-chapter-${b.id}" onchange="plannerBlockChapterPicked(${b.id})" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; max-width:220px;">
+          ${chapterOptionsInitial}
         </select>
       </label>
       <label style="font-size:11px; color:#5f6368; display:flex; align-items:center; gap:5px; padding-bottom:6px;">
         <input type="checkbox" id="planner-fixed-${b.id}" ${b.is_fixed ? 'checked' : ''}> Fixed block
       </label>
       <button class="small primary" onclick="plannerSaveBlock(${b.id})">Save</button>
-      ${!b.is_fixed ? `
-        <button class="small ghost soft" onclick="plannerMoveBlock(${b.id},'up')">Move up</button>
-        <button class="small ghost soft" onclick="plannerMoveBlock(${b.id},'down')">Move down</button>
-        ${b.subject_id ? `<button class="small ghost soft" onclick="plannerPullSubjectDue(${b.id})">Pull due cards</button>` : ''}
-      ` : ''}
+      <button class="small ghost soft" onclick="plannerMoveBlock(${b.id},'up')">Move up</button>
+      <button class="small ghost soft" onclick="plannerMoveBlock(${b.id},'down')">Move down</button>
+      ${(!isDueReview && b.subject_id) ? `<button class="small ghost soft" onclick="plannerPullSubjectDue(${b.id})">Pull due cards</button>` : ''}
       <button class="small ghost soft" style="color:#b91c1c;" onclick="plannerDeleteBlock(${b.id})">Delete</button>
     </div>
   ` : '';
@@ -1578,12 +1649,15 @@ function plannerBlockHtml(b, subjectsById, draggable){
         ${draggable ? '<span class="planner-drag-handle" style="cursor:grab; color:#9aa0a6; font-size:16px; padding-top:2px;" title="Drag to reorder">\u283f</span>' : ''}
         <button onclick="plannerToggleBlock(${b.id}, ${b.completed ? 'false' : 'true'})" style="width:22px; height:22px; border-radius:6px; padding:0; ${b.completed ? 'background:#2E7D32; border-color:#2E7D32; color:#fff;' : ''}" title="Toggle complete">${b.completed ? '\u2713' : ''}</button>
         <div style="flex:1; min-width:0;">
-          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-            <strong style="font-size:13px; ${b.completed ? 'text-decoration:line-through; color:#5f6368;' : ''}">${escapeHtml(b.task_name || 'Study block')}</strong>
-            ${kindBadge}${linkedBadge}${carriedBadge}${continuedFromBadge}${recurringBadge}
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0;">
+              <strong style="font-size:13px; ${b.completed ? 'text-decoration:line-through; color:#5f6368;' : ''}">${escapeHtml(b.task_name || 'Study block')}</strong>
+              ${kindBadge}${linkedBadge}${carriedBadge}${continuedFromBadge}${recurringBadge}
+            </div>
+            ${timeBadge}
           </div>
           <div style="font-size:11px; color:#5f6368; margin-top:2px;">
-            ${subject ? `${subject.icon || '\ud83d\udcda'} ${escapeHtml(subject.name)}` : 'No subject'} \u00b7 ${b.duration_minutes} min${timeBadge}
+            ${subject ? `${subject.icon || '\ud83d\udcda'} ${escapeHtml(subject.name)}` : 'No subject'} \u00b7 ${b.duration_minutes} min
           </div>
           ${linksHtml}
           <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
@@ -1620,9 +1694,13 @@ function plannerAddBlockFormHtml(subjectsById){
         <input type="time" id="planner-new-end" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
       </label>
       <label style="font-size:11px; color:#5f6368;">Subject
-        <select id="planner-new-subject" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+        <select id="planner-new-subject" onchange="plannerNewSubjectChanged()" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
           <option value="">No subject</option>
           ${subjectOptions}
+        </select>
+      </label>
+      <label id="planner-new-chapter-wrap" style="font-size:11px; color:#5f6368; display:none;">Chapter (studying new content)
+        <select id="planner-new-chapter" onchange="plannerNewChapterPicked()" style="display:block; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; max-width:220px;">
         </select>
       </label>
       <label style="font-size:11px; color:#5f6368;">Repeat
@@ -1650,8 +1728,7 @@ function plannerAddBlockFormHtml(subjectsById){
 function renderPlannerDayView(day){
   const subjectsById = {};
   day.subjects.forEach(s => subjectsById[s.id] = s);
-  const fixed = day.day_blocks.filter(b => b.is_fixed);
-  const rotating = day.day_blocks.filter(b => !b.is_fixed);
+  plannerSubjectsById = subjectsById;
   const WEEKDAY_LABELS = ['Every Monday','Every Tuesday','Every Wednesday','Every Thursday','Every Friday','Every Saturday','Every Sunday'];
 
   let html = '';
@@ -1673,11 +1750,9 @@ function renderPlannerDayView(day){
   html += plannerAddBlockFormHtml(subjectsById);
   if(day.day_blocks.length === 0){
     html += '<div class="queue-empty">No blocks generated for this day yet.</div>';
-  }
-  html += fixed.map(b => plannerBlockHtml(b, subjectsById, false)).join('');
-  if(rotating.length){
-    html += `<p style="font-size:10.5px; color:#9aa0a6; margin:14px 0 6px;">\u283f Drag the handle to reorder rotating blocks \u2014 fixed blocks always stay first.</p>`;
-    html += `<div id="plannerRotatingList">${rotating.map(b => plannerBlockHtml(b, subjectsById, true)).join('')}</div>`;
+  } else {
+    html += `<p style="font-size:10.5px; color:#9aa0a6; margin:6px 0 10px;">\u283f Drag the handle to reorder any block \u2014 including fixed ones \u2014 or set a start time to sort it into that time automatically.</p>`;
+    html += `<div id="plannerRotatingList">${day.day_blocks.map(b => plannerBlockHtml(b, subjectsById, true)).join('')}</div>`;
   }
 
   const linkedSet = new Set(day.linked_keys);
