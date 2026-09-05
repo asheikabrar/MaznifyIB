@@ -78,6 +78,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("study_planner_blocks", "carried_from_id", "INTEGER NULL"),
     ("users", "calendar_token", "VARCHAR(64) NOT NULL DEFAULT ''"),
     ("study_planner_blocks", "source_rule_id", "INTEGER NULL"),
+    ("study_planner_blocks", "carry_over_percent", "INTEGER NULL"),
 ]
 
 

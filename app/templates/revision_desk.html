@@ -1409,13 +1409,33 @@ function plannerToggleCarryPrompt(blockId){
   render();
 }
 
+function plannerCarrySyncFromPercent(blockId, totalMinutes){
+  const pctEl = document.getElementById(`planner-carry-pct-${blockId}`);
+  const minsEl = document.getElementById(`planner-carry-mins-${blockId}`);
+  if(!pctEl || !minsEl || !totalMinutes) return;
+  const pct = Math.max(0, Math.min(100, parseInt(pctEl.value, 10) || 0));
+  minsEl.value = Math.max(10, Math.min(180, Math.round(totalMinutes * (100 - pct) / 100)));
+}
+
+function plannerCarrySyncFromMinutes(blockId, totalMinutes){
+  const pctEl = document.getElementById(`planner-carry-pct-${blockId}`);
+  const minsEl = document.getElementById(`planner-carry-mins-${blockId}`);
+  if(!pctEl || !minsEl || !totalMinutes) return;
+  const mins = parseInt(minsEl.value, 10);
+  if(Number.isNaN(mins)) return;
+  pctEl.value = Math.max(0, Math.min(100, Math.round((1 - mins / totalMinutes) * 100)));
+}
+
 async function plannerCarryOver(blockId){
   const minsEl = document.getElementById(`planner-carry-mins-${blockId}`);
+  const pctEl = document.getElementById(`planner-carry-pct-${blockId}`);
   const remaining_minutes = minsEl ? (parseInt(minsEl.value, 10) || 50) : 50;
+  const pctRaw = pctEl ? parseInt(pctEl.value, 10) : NaN;
+  const percent_finished = Number.isNaN(pctRaw) ? null : Math.max(0, Math.min(100, pctRaw));
   try{
     const res = await fetch(`/study-planner/api/blocks/${blockId}/carry-over`, {
       method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ remaining_minutes }),
+      body: JSON.stringify({ remaining_minutes, percent_finished }),
     });
     if(!res.ok) throw new Error('carry-over failed');
     showToast("Marked as done for today \u2014 the rest moved to tomorrow's plan.");
@@ -1576,7 +1596,7 @@ function plannerBlockHtml(b, subjectsById, draggable){
     ? '<span class="priority-tag" style="background:#b45309;">\u21bb Continued tomorrow</span>'
     : '';
   const continuedFromBadge = b.carried_from_id
-    ? '<span class="priority-tag" style="background:#0891b2;">\u21bb Continued from yesterday</span>'
+    ? `<span class="priority-tag" style="background:#0891b2;">\u21bb Continued from ${b.carried_from_date ? formatDateDay(b.carried_from_date) : 'earlier'}</span>`
     : '';
   const recurringBadge = b.source_rule_id
     ? '<span class="priority-tag" style="background:#6d28d9;">\ud83d\udd01 Recurring</span>'
@@ -1592,6 +1612,9 @@ function plannerBlockHtml(b, subjectsById, draggable){
   ).join('');
   const timeBadge = (b.start_time || b.end_time)
     ? `<span style="font-size:16px; font-weight:800; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:8px; padding:5px 12px; white-space:nowrap;">\ud83d\udd50 ${formatTimeRange(b.start_time, b.end_time)}</span>`
+    : '';
+  const percentBadge = (b.carry_over_percent !== null && b.carry_over_percent !== undefined)
+    ? `<span style="font-size:16px; font-weight:800; color:#166534; background:#dcfce7; border:1px solid #86efac; border-radius:8px; padding:5px 12px; white-space:nowrap;">\u2705 ${b.carry_over_percent}% done</span>`
     : '';
   const chapterWrapStyle = subject ? '' : 'display:none;';
   const chapterOptionsInitial = subject ? plannerChapterOptionsHtml(subject.name) : '';
@@ -1635,8 +1658,11 @@ function plannerBlockHtml(b, subjectsById, draggable){
   const carryPrompt = plannerCarryPrompts.has(b.id) ? `
     <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:10px;">
       <div style="font-size:11.5px; color:#9a3412; flex-basis:100%;">Not finished yet? Mark today done and carry the remaining time to tomorrow's plan.</div>
+      <label style="font-size:11px; color:#5f6368;">% finished
+        <input type="number" min="0" max="100" id="planner-carry-pct-${b.id}" placeholder="e.g. 40" oninput="plannerCarrySyncFromPercent(${b.id}, ${b.duration_minutes})" style="display:block; width:80px; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+      </label>
       <label style="font-size:11px; color:#5f6368;">Minutes remaining
-        <input type="number" min="10" max="180" id="planner-carry-mins-${b.id}" value="${b.duration_minutes}" style="display:block; width:100px; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
+        <input type="number" min="10" max="180" id="planner-carry-mins-${b.id}" value="${b.duration_minutes}" oninput="plannerCarrySyncFromMinutes(${b.id}, ${b.duration_minutes})" style="display:block; width:100px; margin-top:3px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:6px;">
       </label>
       <button class="small primary" onclick="plannerCarryOver(${b.id})">Carry over to tomorrow</button>
       <button class="small ghost soft" onclick="plannerToggleCarryPrompt(${b.id})">Cancel</button>
@@ -1654,7 +1680,7 @@ function plannerBlockHtml(b, subjectsById, draggable){
               <strong style="font-size:13px; ${b.completed ? 'text-decoration:line-through; color:#5f6368;' : ''}">${escapeHtml(b.task_name || 'Study block')}</strong>
               ${kindBadge}${linkedBadge}${carriedBadge}${continuedFromBadge}${recurringBadge}
             </div>
-            ${timeBadge}
+            ${(timeBadge || percentBadge) ? `<div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">${timeBadge}${percentBadge}</div>` : ''}
           </div>
           <div style="font-size:11px; color:#5f6368; margin-top:2px;">
             ${subject ? `${subject.icon || '\ud83d\udcda'} ${escapeHtml(subject.name)}` : 'No subject'} \u00b7 ${b.duration_minutes} min

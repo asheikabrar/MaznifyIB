@@ -1903,7 +1903,14 @@ def _serialize_planner_subject(s: Subject) -> dict:
     return {"id": s.id, "name": s.name, "icon": s.icon, "color": s.color}
 
 
-def _serialize_planner_block(b: StudyPlannerBlock) -> dict:
+def _serialize_planner_block(
+    b: StudyPlannerBlock,
+    db: Optional[Session] = None,
+    blocks_by_id: Optional[dict[int, StudyPlannerBlock]] = None,
+) -> dict:
+    carried_from_date = (
+        study_planner.resolve_carry_over_origin_date(db, b, blocks_by_id) if db and b.carried_from_id else None
+    )
     return {
         "id": b.id,
         "on_date": b.on_date.isoformat(),
@@ -1919,6 +1926,8 @@ def _serialize_planner_block(b: StudyPlannerBlock) -> dict:
         "completed": b.completed,
         "carried_forward": b.carried_forward,
         "carried_from_id": b.carried_from_id,
+        "carried_from_date": carried_from_date.isoformat() if carried_from_date else None,
+        "carry_over_percent": b.carry_over_percent,
         "source_rule_id": b.source_rule_id,
         "revision_links": [
             {
@@ -1981,6 +1990,7 @@ def _build_planner_day_payload(
         (b for b in week_blocks if b.on_date == on_date and b.block_kind != "placeholder"),
         key=lambda b: _planner_block_sort_key(b.start_time, b.slot_index, b.id),
     )
+    week_blocks_by_id = {b.id: b for b in week_blocks}
 
     subjects = list(db.scalars(select(Subject).order_by(Subject.sort_order, Subject.name)).all())
 
@@ -2018,7 +2028,7 @@ def _build_planner_day_payload(
         "next": (on_date + timedelta(days=1)).isoformat(),
         "week_start": week_start.isoformat(),
         "week_dates": [(week_start + timedelta(days=i)).isoformat() for i in range(7)],
-        "day_blocks": [_serialize_planner_block(b) for b in day_blocks],
+        "day_blocks": [_serialize_planner_block(b, db, week_blocks_by_id) for b in day_blocks],
         "subjects": [_serialize_planner_subject(s) for s in subjects],
         "due_cards": due_cards_mapped,
         "linked_keys": linked_keys,
@@ -2044,10 +2054,11 @@ def _build_planner_week_payload(
 ) -> dict:
     week_dates = [week_start + timedelta(days=i) for i in range(7)]
     blocks_by_day: dict[str, list[dict]] = {d.isoformat(): [] for d in week_dates}
+    week_blocks_by_id = {b.id: b for b in week_blocks}
     for b in week_blocks:
         if b.block_kind == "placeholder":
             continue
-        blocks_by_day.setdefault(b.on_date.isoformat(), []).append(_serialize_planner_block(b))
+        blocks_by_day.setdefault(b.on_date.isoformat(), []).append(_serialize_planner_block(b, db, week_blocks_by_id))
     for day_iso in blocks_by_day:
         blocks_by_day[day_iso].sort(key=lambda b: _planner_block_sort_key(b["start_time"], b["slot_index"], b["id"]))
 
@@ -2369,6 +2380,13 @@ async def study_planner_api_block_carry_over(block_id: int, request: Request, db
     except (TypeError, ValueError):
         remaining_minutes = block.duration_minutes
 
+    percent_finished = payload.get("percent_finished")
+    if percent_finished not in (None, ""):
+        try:
+            block.carry_over_percent = max(0, min(100, int(percent_finished)))
+        except (TypeError, ValueError):
+            block.carry_over_percent = None
+
     block.completed = True
     block.completed_at = datetime.utcnow()
     block.carried_forward = True
@@ -2405,6 +2423,9 @@ async def study_planner_api_block_carry_over(block_id: int, request: Request, db
         is_fixed=False,
         is_optional=False,
         carried_from_id=block.id,
+        # the % reflects overall task progress, not just today's share -- carry it
+        # forward so tomorrow's block still shows how far along the task really is
+        carry_over_percent=block.carry_over_percent,
     )
     db.add(new_block)
     db.flush()

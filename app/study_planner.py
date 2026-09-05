@@ -651,6 +651,33 @@ def push_block_links_to_revision_state(db: Session, user_id: int, block: StudyPl
     return applied
 
 
+def resolve_carry_over_origin_date(
+    db: Session,
+    block: StudyPlannerBlock,
+    blocks_by_id: Optional[dict[int, StudyPlannerBlock]] = None,
+    max_hops: int = 60,
+) -> Optional[date]:
+    """Walk a block's carried_from_id chain back to the earliest ancestor and
+    return that ancestor's on_date -- the day the task was originally scheduled,
+    before any carry-overs. Returns None if this block was never carried forward.
+    `blocks_by_id` (already-loaded blocks, e.g. for the current week) avoids extra
+    queries when the whole chain is within that set."""
+    if not block.carried_from_id:
+        return None
+    lookup = blocks_by_id or {}
+    current_id: Optional[int] = block.carried_from_id
+    origin_date: Optional[date] = None
+    hops = 0
+    while current_id and hops < max_hops:
+        parent = lookup.get(current_id) or db.get(StudyPlannerBlock, current_id)
+        if not parent:
+            break
+        origin_date = parent.on_date
+        current_id = parent.carried_from_id
+        hops += 1
+    return origin_date
+
+
 def get_week_blocks(
     db: Session,
     user_id: int,

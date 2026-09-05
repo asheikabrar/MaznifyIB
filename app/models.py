@@ -195,6 +195,7 @@ class StudyPlannerBlock(Base):
     revision_pushed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     carried_forward: Mapped[bool] = mapped_column(Boolean, default=False)  # this block's leftover work was carried to the next day
     carried_from_id: Mapped[Optional[int]] = mapped_column(ForeignKey("study_planner_blocks.id"), nullable=True)
+    carry_over_percent: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # % done when carried over, if provided
     source_rule_id: Mapped[Optional[int]] = mapped_column(ForeignKey("planner_fixed_rules.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
